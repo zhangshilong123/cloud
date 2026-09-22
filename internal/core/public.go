@@ -18,8 +18,8 @@ type PublicRequest struct {
 }
 
 // Public executes one authorized public request in a short database transaction.
-// Committed collaboration-space mutations are broadcast to live subscribers after
-// the transaction succeeds, never before.
+// Committed collaboration mutations are broadcast to live space subscribers
+// after the transaction succeeds, never before.
 func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, error) {
 	status := 200
 	var dispatches []dispatchTarget
@@ -77,6 +77,7 @@ func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, erro
 		case r.ProjectID == "" && r.WorkspaceID == "" && r.OperationID == "" && strings.HasSuffix(r.Path, "/projects") && r.Method == "POST":
 			out = createProject(t, r, uid, hash)
 			status = 202
+			events = append(events, SpaceEvent{Type: "project.created", SpaceID: out.O("resource").S("spaceId"), ProjectID: out.O("resource").S("id")})
 		case r.OperationID != "":
 			out = retryOperation(t, r, uid)
 			status = 202
@@ -84,7 +85,7 @@ func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, erro
 			out = workspaceAction(t, r, uid, hash, isAdmin)
 			status = 202
 		case r.ProjectID != "":
-			p := project(t, r.TenantID, uid, r.ProjectID)
+			p, m := projectInSpace(t, r.TenantID, uid, r.ProjectID)
 			switch {
 			case strings.HasSuffix(r.Path, "/workspaces"):
 				out = createWorkspace(t, r, p, uid, hash)
@@ -94,21 +95,11 @@ func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, erro
 				name := validText(r.Body.S("name"), 200)
 				require(p.S("lifecycle") != "deleting", 409, "resource_unavailable")
 				t.exec("UPDATE projects SET name=$2,version=version+1 WHERE id=$1", p.S("id"), name)
-				out = project(t, r.TenantID, uid, p.S("id"))
-				if p.S("spaceId") != "" {
-					events = append(events, SpaceEvent{Type: "project.updated", SpaceID: p.S("spaceId"), ProjectID: p.S("id"), Version: out.N("version")})
-				}
+				out = t.one("SELECT * FROM projects WHERE id=$1", p.S("id"))
+				events = append(events, SpaceEvent{Type: "project.updated", SpaceID: p.S("spaceId"), ProjectID: p.S("id"), Version: out.N("version")})
 			default:
 				require(r.Method == "DELETE", 405, "method_not_allowed")
-				// Delete rule (project workspace-sharing): the project creator may always
-				// delete their own project; otherwise the actor must be a workspace owner
-				// or admin. A member who can read but not delete gets 403; non-members
-				// never reach this gate (project() hides the resource with 404). Unscoped
-				// projects are owner-only in project(), so the creator is the owner and no
-				// extra gate is needed.
-				if sid := p.S("spaceId"); sid != "" {
-					require(workspaceCanDelete(t, sid, uid, p.S("ownerUserId")), 403, "space_role_required")
-				}
+				requireSpaceRole(m, "admin", "owner")
 				version(p, r.Body.N("version"))
 				idleProject(t, p.S("id"))
 				require(p.S("lifecycle") == "active", 409, "resource_unavailable")
@@ -124,11 +115,9 @@ func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, erro
 				t.exec("UPDATE projects SET lifecycle='deleting',version=version+1 WHERE id=$1", p.S("id"))
 				req := Object{"previous": previous}
 				op := newOperation(t, r, uid, p.S("id"), "", "delete_project", "quiesce", hash, req)
-				out = Object{"resource": project(t, r.TenantID, uid, p.S("id")), "operation": op}
+				out = Object{"resource": t.one("SELECT * FROM projects WHERE id=$1", p.S("id")), "operation": op}
 				status = 202
-				if p.S("spaceId") != "" {
-					events = append(events, SpaceEvent{Type: "project.archived", SpaceID: p.S("spaceId"), ProjectID: p.S("id")})
-				}
+				events = append(events, SpaceEvent{Type: "project.archived", SpaceID: p.S("spaceId"), ProjectID: p.S("id")})
 			}
 		case r.IssueID != "" || strings.HasSuffix(r.Path, "/issues"):
 			switch {
@@ -283,10 +272,6 @@ func readPublic(t *transaction, r *PublicRequest, uid string) Object {
 			return page(t, "SELECT wm.user_id AS id, wm.workspace_id, wm.user_id, wm.role, wm.status, wm.version, wm.joined_at, u.display_name FROM collab_workspace_members wm JOIN users u ON u.id=wm.user_id WHERE wm.workspace_id=$1", []any{r.SpaceID}, "wm.user_id", r)
 		case strings.HasSuffix(r.Path, "/projects"):
 			spaceMember(t, r.SpaceID, uid)
-			// The Workspace is the sharing boundary: space membership already gates the
-			// collection, and every active project in the space is visible to its members
-			// (project workspace-sharing migration). Unscoped projects have no space_id
-			// and never appear here.
 			return page(t, "SELECT p.* FROM projects p WHERE p.space_id=$1 AND p.deleted_at IS NULL", []any{r.SpaceID}, "p.id", r)
 		default:
 			spaceMember(t, r.SpaceID, uid)
@@ -340,16 +325,11 @@ func readPublic(t *transaction, r *PublicRequest, uid string) Object {
 	case r.ProjectID != "":
 		p := project(t, r.TenantID, uid, r.ProjectID)
 		if strings.HasSuffix(r.Path, "/workspaces") {
-			// A shared (space-scoped) project exposes all of its runtime workspaces to
-			// workspace members; an unscoped (legacy) project stays owner-filtered.
-			if p.S("spaceId") != "" {
-				return page(t, "SELECT w.*,wt.branch_name,wt.base_commit_id,task.title FROM workspaces w JOIN workspace_worktrees wt ON wt.workspace_id=w.id LEFT JOIN tasks task ON task.workspace_id=w.id WHERE w.project_id=$1 AND w.tenant_id=$2 AND w.deleted_at IS NULL", []any{p.S("id"), r.TenantID}, "w.id", r)
-			}
-			return page(t, "SELECT w.*,wt.branch_name,wt.base_commit_id,task.title FROM workspaces w JOIN workspace_worktrees wt ON wt.workspace_id=w.id LEFT JOIN tasks task ON task.workspace_id=w.id WHERE w.project_id=$1 AND w.tenant_id=$2 AND w.owner_user_id=$3 AND w.deleted_at IS NULL", []any{p.S("id"), r.TenantID, uid}, "w.id", r)
+			return page(t, "SELECT w.*,wt.branch_name,wt.base_commit_id,task.title FROM workspaces w JOIN workspace_worktrees wt ON wt.workspace_id=w.id LEFT JOIN tasks task ON task.workspace_id=w.id WHERE w.project_id=$1 AND w.tenant_id=$2 AND w.deleted_at IS NULL", []any{p.S("id"), r.TenantID}, "w.id", r)
 		}
 		return p
 	default:
-		return page(t, "SELECT * FROM projects WHERE tenant_id=$1 AND owner_user_id=$2 AND deleted_at IS NULL", []any{r.TenantID, uid}, "id", r)
+		return page(t, "SELECT p.* FROM projects p JOIN collab_workspace_members wm ON wm.workspace_id=p.space_id JOIN collab_workspaces w ON w.id=p.space_id WHERE p.tenant_id=$1 AND wm.user_id=$2 AND wm.status='active' AND p.deleted_at IS NULL AND w.archived_at IS NULL", []any{r.TenantID, uid}, "p.id", r)
 	}
 }
 
@@ -368,10 +348,8 @@ func putMember(t *transaction, r *PublicRequest, uid string) Object {
 	} else {
 		require(r.Body.N("version") == 0, 409, "version_conflict")
 		t.exec("INSERT INTO tenant_memberships(tenant_id,user_id,role,status) VALUES($1,$2,$3,$4)", r.TenantID, r.UserID, role, status)
-		// Space-level convenience: a new tenant member also joins the default
-		// collaboration space — admins as owners, members as members — mirroring the
-		// mapping migration 0012 seeded for pre-existing members. This never widens
-		// Project or Runtime Workspace visibility (current owner-based authorization).
+		// Every tenant member joins the default collaboration space: admins as
+		// owners, members as members. Migration 0006 seeded the same mapping.
 		if dw := t.one("SELECT id FROM collab_workspaces WHERE tenant_id=$1 AND slug='default' AND archived_at IS NULL", r.TenantID); dw != nil {
 			spaceRole := "member"
 			if role == "admin" {
@@ -396,14 +374,13 @@ func validRef(s string) string {
 }
 
 func createProject(t *transaction, r *PublicRequest, uid, hash string) Object {
-	// Space is optional. The tenant-level path leaves space_id NULL; the
-	// space-scoped path (SpaceID set) requires active membership in that space and
-	// persists the space_id. Neither path grants any widened visibility (current
-	// owner-based authorization).
-	var spaceID any
-	if r.SpaceID != "" {
-		spaceMember(t, r.SpaceID, uid)
-		spaceID = r.SpaceID
+	// The legacy tenant-level path uses the tenant's default collaboration
+	// space; the space-scoped path requires membership in the given space.
+	spaceID := r.SpaceID
+	if spaceID == "" {
+		spaceID = defaultSpace(t, r.TenantID).S("id")
+	} else {
+		spaceMember(t, spaceID, uid)
 	}
 	name := validText(r.Body.S("name"), 200)
 	repo := validText(r.Body.S("repositoryUrl"), 2048)
@@ -429,7 +406,7 @@ func createProject(t *transaction, r *PublicRequest, uid, hash string) Object {
 	t.exec("INSERT INTO project_storage(project_id,observed_state) VALUES($1,'pending')", pid)
 	insertWorkspace(t, r.TenantID, uid, pid, wid, "main", branch, "")
 	op := newOperation(t, r, uid, pid, wid, "create_project", "storage", hash, Object{})
-	return Object{"resource": project(t, r.TenantID, uid, pid), "workspace": workspace(t, r.TenantID, uid, wid, false), "operation": op}
+	return Object{"resource": t.one("SELECT * FROM projects WHERE id=$1", pid), "workspace": t.one("SELECT * FROM workspaces WHERE id=$1", wid), "operation": op}
 }
 
 func insertWorkspace(t *transaction, tid, uid, pid, wid, kind, ref, title string) {

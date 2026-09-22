@@ -73,7 +73,8 @@ function invalidateForEvent(
  * Subscribes the tab to the space event stream and invalidates the affected
  * queries on every notice. Events are lightweight: they only trigger
  * refetches against the authoritative REST state, never carry it. The
- * subscription ends with the component.
+ * subscription ends with the component. Authentication is supplied by the
+ * same-origin HttpOnly Gateway session cookie rather than JavaScript headers.
  */
 export function useSpaceEvents(tenantId: string | undefined, spaceId: string | undefined): void {
   const queryClient = useQueryClient()

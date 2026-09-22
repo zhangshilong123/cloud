@@ -84,7 +84,7 @@ func Document() map[string]any {
 	s["SpaceMemberListItem"] = resource("id workspaceId userId role status version displayName joinedAt", "")
 	properties(s, "SpaceMember")["role"] = enumeration("owner", "admin", "member")
 	s["SpaceEvent"] = object(obj{"type": enumeration("space.updated", "space.member_updated", "project.created", "project.updated", "project.archived"), "spaceId": uuid(), "projectId": optional(uuid()), "version": number()}, "type", "spaceId")
-	s["Project"] = resource("id tenantId ownerUserId spaceId name repositoryUrl defaultBranch credentialRefId lifecycle version createdAt deletedAt", "spaceId credentialRefId deletedAt")
+	s["Project"] = resource("id tenantId ownerUserId spaceId name repositoryUrl defaultBranch credentialRefId lifecycle version createdAt deletedAt", "credentialRefId deletedAt")
 	s["Workspace"] = resource("id tenantId ownerUserId projectId kind desiredState observedState runtimeGeneration version admissionOpen admissionEpoch createdAt deletedAt", "deletedAt")
 	s["WorkspaceListItem"] = resource("id tenantId ownerUserId projectId kind desiredState observedState runtimeGeneration version admissionOpen admissionEpoch createdAt deletedAt branchName baseCommitId title", "deletedAt baseCommitId title")
 	s["Comment"] = resource("id tenantId issueId authorUserId authorType authorId parentId body seq version createdAt updatedAt deletedAt", "authorUserId authorId parentId deletedAt")
@@ -175,7 +175,7 @@ func Document() map[string]any {
 	ep["externalId"] = optional(str())
 	ep["request"] = ref("EffectRequest")
 	ep["result"] = ref("EffectResult")
-	s["ControllerProject"] = resource("id tenantId ownerUserId spaceId name repositoryUrl defaultBranch credentialRefId lifecycle version createdAt deletedAt secretRef", "spaceId credentialRefId deletedAt secretRef")
+	s["ControllerProject"] = resource("id tenantId ownerUserId spaceId name repositoryUrl defaultBranch credentialRefId lifecycle version createdAt deletedAt secretRef", "credentialRefId deletedAt secretRef")
 	s["ControllerWorkspace"] = resource("id tenantId ownerUserId projectId kind desiredState observedState runtimeGeneration version admissionOpen admissionEpoch createdAt deletedAt relativePath branchName requestedRef baseCommitId", "deletedAt baseCommitId")
 	for _, name := range []string{"WorkspaceListItem", "ControllerWorkspace"} {
 		properties(s, name)["baseCommitId"] = optional(obj{"type": "string", "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"})
@@ -234,14 +234,14 @@ func Document() map[string]any {
 	}
 	// The SSE stream is not part of router.Routes(); it is documented manually with the
 	// same authorization contract as REST (membership verified before the stream opens).
-	paths["/api/v1/tenants/{tid}/spaces/{spaceId}/events"] = obj{"get": obj{
+	paths["/api/v1/tenants/{tid}/spaces/{sid}/events"] = obj{"get": obj{
 		"operationId": "getSpaceEvents",
 		"tags":        []string{"spaces"},
-		"summary":     "Stream collaboration space events over server-sent events",
+		"summary":     "Stream workspace events over server-sent events",
 		"description": "Membership is verified before the stream opens. Events are lightweight invalidation notices published after commit; clients refetch authoritative state over REST.",
 		"parameters": []any{
 			obj{"name": "tid", "in": "path", "required": true, "schema": uuid()},
-			obj{"name": "spaceId", "in": "path", "required": true, "schema": uuid()},
+			obj{"name": "sid", "in": "path", "required": true, "schema": uuid()},
 		},
 		"security": []any{obj{"serviceCredential": []string{}, "userCredential": []string{}}},
 		"responses": obj{
@@ -594,9 +594,9 @@ func description(r router.Route) string {
 		case strings.Contains(r.Path, "/members") && r.Method == "POST":
 			base += "Adds an already-registered user to the space as a plain member by email, resolved in the caller's identity source. Admin or owner only. The target is atomically ensured tenant membership (existing role kept) and thereby gains access to the Projects and Runtime Workspaces shared in that workspace. Unknown or inactive email is 404 user_not_registered; adding an existing member returns the current membership unchanged. "
 		case strings.Contains(r.Path, "/members") && r.Method == "PUT":
-			base += "Updates a member's role (admin/member) or status. Role management is owner-only — admins add members through POST, they cannot change roles. The owner role is immutable: granting owner or any write touching an owner row is 409 ownership_transfer_not_supported (ownership transfer is not implemented). The target user must be an active member of the same tenant; a matching version is required. "
+			base += "Updates a member's role (admin/member/owner) or status; admin or owner, and granting owner requires owner. The target user must be an active member of the same tenant; a matching version is required. The last owner cannot be demoted or disabled (409 space_last_owner). "
 		case strings.Contains(r.Path, "/members") && r.Method == "DELETE":
-			base += "Removes a member's workspace membership (hard delete); owner only, admins and members cannot remove anyone. The user account, tenant membership and their resources are untouched and remain in the workspace; the removed member's access to the workspace, its projects and runtime workspaces is revoked. An owner row can never be removed, including self-removal (409 cannot_remove_workspace_owner). Requires a matching version and an idempotency key. "
+			base += "Removes a member's workspace membership (hard delete); owner only, admins and members cannot remove anyone. The user account, tenant membership and their resources are untouched and remain in the workspace; the removed member's access to the workspace, its projects and runtime workspaces is revoked. The last owner cannot be removed (409 space_last_owner). Requires a matching version and an idempotency key. "
 		case strings.Contains(r.Path, "/members"):
 			base += "Lists the space's members; any active member of the space can read the member list. "
 		case r.Method == "POST" && strings.HasSuffix(r.Path, "/spaces"):
@@ -606,7 +606,7 @@ func description(r router.Route) string {
 		case r.Method == "PATCH":
 			base += "Only name and description may change; slug is immutable. Requires admin or owner and a matching version. "
 		case r.Method == "DELETE":
-			base += "Archives the space (soft delete); requires owner and a matching version. The default space cannot be archived. Projects are unaffected. "
+			base += "Archives the space (soft delete); requires owner and a matching version. Projects are unaffected. "
 		default:
 			base += "Only joined members can read a space. "
 		}
@@ -646,7 +646,7 @@ func errorDescription(code string) string {
 	case "404":
 		return "Resource absent or outside authorized tenant/owner scope"
 	case "409":
-		return "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+		return "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
 	case "428":
 		return "Version precondition required"
 	case "503":

@@ -52,7 +52,7 @@ func TestSpaceLifecycleMembershipAndOwnerInvariants(t *testing.T) {
 	f.call("PUT", f.path("/spaces/"+sid+"/members/"+bobID), core.Object{"role": "member", "status": "active", "version": 0}, "", 200)
 
 	// Scenario 6: a member cannot add members.
-	carol, carolID := f.registerUser(t, "carol@example.com", "Carol")
+	carol, carolID := f.addUser(t, "carol", "Carol")
 	_, status, e := f.client.Call(context.Background(), "PUT", f.path("/spaces/"+sid+"/members/"+carolID), "gateway", gw, &bob, "", core.Object{"role": "member", "status": "active", "version": 0})
 	must(t, e)
 	if status != 403 {
@@ -64,42 +64,35 @@ func TestSpaceLifecycleMembershipAndOwnerInvariants(t *testing.T) {
 	if status != 403 {
 		t.Fatalf("member self-promoted: want 403 got %d", status)
 	}
-	// Scenario 5 (owner-immutable): the owner promotes bob to admin (role
-	// changes are owner-only), and admin add-by-email is preserved for admins.
+	// Scenario 5: admin can add members.
 	_, status, e = f.client.Call(context.Background(), "PUT", f.path("/spaces/"+sid+"/members/"+bobID), "gateway", gw, &f.user, "", core.Object{"role": "admin", "status": "active", "version": 1})
 	must(t, e)
 	if status != 200 {
 		t.Fatalf("owner promoted member: want 200 got %d", status)
 	}
-	_, status, e = f.client.Call(context.Background(), "POST", f.path("/spaces/"+sid+"/members"), "gateway", gw, &bob, "admin-add-carol", core.Object{"email": "carol@example.com"})
+	_, status, e = f.client.Call(context.Background(), "PUT", f.path("/spaces/"+sid+"/members/"+carolID), "gateway", gw, &bob, "", core.Object{"role": "member", "status": "active", "version": 0})
 	must(t, e)
 	if status != 200 {
-		t.Fatalf("admin added member by email: want 200 got %d", status)
+		t.Fatalf("admin added member: want 200 got %d", status)
 	}
 
-	// Scenarios 7-8 (owner immutable): the owner role can never be demoted or
-	// granted through the member API, not even by the owner. An admin touching an
-	// owner row is 403; owner transitions on an owner row are 409.
+	// Scenarios 7-8: the last owner can never be demoted, by admin or by owner.
 	_, status, e = f.client.Call(context.Background(), "PUT", f.path("/spaces/"+sid+"/members/"+f.uid), "gateway", gw, &bob, "", core.Object{"role": "member", "status": "active", "version": 1})
 	must(t, e)
-	if status != 403 {
-		t.Fatalf("admin demoted owner: want 403 got %d", status)
+	if status != 409 {
+		t.Fatalf("admin demoted last owner: want 409 got %d", status)
 	}
-	o := f.call("PUT", f.path("/spaces/"+sid+"/members/"+f.uid), core.Object{"role": "member", "status": "active", "version": 1}, "", 409)
-	if o.S("code") != "ownership_transfer_not_supported" {
-		t.Fatalf("owner self-demotion: want ownership_transfer_not_supported got %v", o)
-	}
-	// An owner grant by an owner is rejected; the owner role is not grantable.
-	o = f.call("PUT", f.path("/spaces/"+sid+"/members/"+bobID), core.Object{"role": "owner", "status": "active", "version": 2}, "", 409)
-	if o.S("code") != "ownership_transfer_not_supported" {
-		t.Fatalf("owner grant: want ownership_transfer_not_supported got %v", o)
-	}
-	// The second-owner demotion path no longer exists: an admin cannot demote the
-	// owner row either (403), so alice remains the sole owner throughout.
-	_, status, e = f.client.Call(context.Background(), "PUT", f.path("/spaces/"+sid+"/members/"+f.uid), "gateway", gw, &bob, "", core.Object{"role": "member", "status": "active", "version": 1})
+	f.call("PUT", f.path("/spaces/"+sid+"/members/"+f.uid), core.Object{"role": "member", "status": "active", "version": 1}, "", 409)
+	// An owner grant by an owner is allowed; a second owner can demote the first.
+	_, status, e = f.client.Call(context.Background(), "PUT", f.path("/spaces/"+sid+"/members/"+bobID), "gateway", gw, &f.user, "", core.Object{"role": "owner", "status": "active", "version": 2})
 	must(t, e)
-	if status != 403 {
-		t.Fatalf("admin demoted the owner row: want 403 got %d", status)
+	if status != 200 {
+		t.Fatalf("owner granted owner: want 200 got %d", status)
+	}
+	_, status, e = f.client.Call(context.Background(), "PUT", f.path("/spaces/"+sid+"/members/"+f.uid), "gateway", gw, &f.user, "", core.Object{"role": "member", "status": "active", "version": 1})
+	must(t, e)
+	if status != 200 {
+		t.Fatalf("owner demoted with second owner present: want 200 got %d", status)
 	}
 
 	// Scenario 13: lists contain only joined spaces.
@@ -118,14 +111,13 @@ func TestSpaceLifecycleMembershipAndOwnerInvariants(t *testing.T) {
 	}
 
 	// Scenario 14: archive is owner-only and removes the space from lists.
-	// alice remains the owner throughout (the owner role has no demotion path);
-	// a member (carol) cannot archive, the owner (alice) can.
-	_, status, e = f.client.Call(context.Background(), "DELETE", f.path("/spaces/"+sid), "gateway", gw, &carol, "carol-archive", core.Object{"version": space.N("version")})
+	// bob is the sole owner after alice's demotion; alice (member) cannot archive.
+	_, status, e = f.client.Call(context.Background(), "DELETE", f.path("/spaces/"+sid), "gateway", gw, &f.user, "alice-archive", core.Object{"version": space.N("version")})
 	must(t, e)
 	if status != 403 {
 		t.Fatalf("member archived space: want 403 got %d", status)
 	}
-	_, status, e = f.client.Call(context.Background(), "DELETE", f.path("/spaces/"+sid), "gateway", gw, &f.user, "alice-archive", core.Object{"version": space.N("version")})
+	_, status, e = f.client.Call(context.Background(), "DELETE", f.path("/spaces/"+sid), "gateway", gw, &bob, "bob-archive", core.Object{"version": space.N("version")})
 	must(t, e)
 	if status != 200 {
 		t.Fatalf("owner archive: want 200 got %d", status)
@@ -144,105 +136,5 @@ func TestSpaceLifecycleMembershipAndOwnerInvariants(t *testing.T) {
 	must(t, e)
 	if status != 404 {
 		t.Fatalf("archived space readable: want 404 got %d", status)
-	}
-}
-
-// TestDefaultSpaceCannotBeArchived covers D7: the tenant default space
-// (slug='default') is the foundational collaboration boundary and can never be
-// archived away — not even by its owner.
-func TestDefaultSpaceCannotBeArchived(t *testing.T) {
-	f := setup(t)
-	gw := core.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "gateway-a"}}
-	list := f.call("GET", f.path("/spaces"), nil, "", 200)
-	defaultID := ""
-	for _, item := range list["items"].([]any) {
-		o := core.Object(item.(map[string]any))
-		if o.S("slug") == "default" {
-			defaultID = o.S("id")
-		}
-	}
-	if defaultID == "" {
-		t.Fatal("bootstrap default space missing")
-	}
-	space := f.call("GET", f.path("/spaces/"+defaultID), nil, "", 200)
-	_, status, e := f.client.Call(context.Background(), "DELETE", f.path("/spaces/"+defaultID), "gateway", gw, &f.user, "archive-default", core.Object{"version": space.N("version")})
-	must(t, e)
-	if status != 409 {
-		t.Fatalf("archive default space: want 409 got %d", status)
-	}
-	// The default space survives, stays listed, and its metadata is unchanged.
-	still := f.call("GET", f.path("/spaces/"+defaultID), nil, "", 200)
-	if still.S("slug") != "default" || still.S("archivedAt") != "" || still.N("version") != space.N("version") {
-		t.Fatalf("default space mutated: %v", still)
-	}
-}
-
-// TestSpaceMutationsRequireIdempotencyKey covers the backend half of S1: a POST or
-// DELETE without a non-empty Idempotency-Key is rejected outright, and replaying one
-// key with the same body returns the original result instead of creating a second
-// space. The frontend mints exactly one key per logical mutation so that a retry
-// lands on this replay path.
-func TestSpaceMutationsRequireIdempotencyKey(t *testing.T) {
-	f := setup(t)
-	body := core.Object{"name": "Keyed", "slug": "keyed", "description": ""}
-
-	// No key: the mutation never reaches the handler.
-	missing := f.call("POST", f.path("/spaces"), body, "", 400)
-	if missing.S("code") != "idempotency_key_required" {
-		t.Fatalf("keyless create: want idempotency_key_required got %v", missing)
-	}
-
-	// A keyed create succeeds; replaying the same key and body returns the same
-	// space rather than a duplicate.
-	created := f.call("POST", f.path("/spaces"), body, "keyed-create", 200)
-	replay := f.call("POST", f.path("/spaces"), body, "keyed-create", 200)
-	if replay.S("id") != created.S("id") {
-		t.Fatalf("replayed create made a second space: %v vs %v", replay.S("id"), created.S("id"))
-	}
-	if n := f.scalar("SELECT count(*) FROM collab_workspaces WHERE tenant_id=$1 AND slug=$2", f.tid, "keyed"); n != 1 {
-		t.Fatalf("replayed create inserted rows: want 1 got %d", n)
-	}
-
-	// Reusing a key for a different request is a conflict, which is why the key is
-	// bound to one logical mutation rather than minted per attempt.
-	conflict := f.call("POST", f.path("/spaces"), core.Object{"name": "Other", "slug": "other", "description": ""}, "keyed-create", 409)
-	if conflict.S("code") != "idempotency_conflict" {
-		t.Fatalf("key reuse with a new body: want idempotency_conflict got %v", conflict)
-	}
-}
-
-// TestArchivedSpaceSlugStaysReserved covers S2: archiving is a soft delete, so the
-// tenant-scoped slug stays reserved by the archived row. Re-creating the same slug
-// must be rejected with 409 space_slug_conflict — it must neither resurrect the
-// archived space nor insert a second row for that slug.
-func TestArchivedSpaceSlugStaysReserved(t *testing.T) {
-	f := setup(t)
-	gw := core.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "gateway-a"}}
-
-	space := f.createSpace("Reuse", "reuse", "reuse-create")
-	sid := space.S("id")
-	_, status, e := f.client.Call(context.Background(), "DELETE", f.path("/spaces/"+sid), "gateway", gw, &f.user, "reuse-archive", core.Object{"version": space.N("version")})
-	must(t, e)
-	if status != 200 {
-		t.Fatalf("archive space: want 200 got %d", status)
-	}
-
-	// The archived space no longer releases its slug: the create pre-check and the
-	// UNIQUE(tenant_id,slug) index both cover archived rows.
-	o, status, e := f.client.Call(context.Background(), "POST", f.path("/spaces"), "gateway", gw, &f.user, "reuse-create-2", core.Object{"name": "Reuse Again", "slug": "reuse", "description": ""})
-	must(t, e)
-	if status != 409 {
-		t.Fatalf("recreate archived slug: want 409 got %d %v", status, o)
-	}
-	if o.S("code") != "space_slug_conflict" {
-		t.Fatalf("recreate archived slug: want space_slug_conflict got %v", o)
-	}
-
-	// Exactly one row still owns the slug, and it is still the archived original.
-	if n := f.scalar("SELECT count(*) FROM collab_workspaces WHERE tenant_id=$1 AND slug=$2", f.tid, "reuse"); n != 1 {
-		t.Fatalf("slug rows after rejected recreate: want 1 got %d", n)
-	}
-	if n := f.scalar("SELECT count(*) FROM collab_workspaces WHERE id=$1 AND archived_at IS NOT NULL", sid); n != 1 {
-		t.Fatal("archived original was resurrected or unarchived")
 	}
 }

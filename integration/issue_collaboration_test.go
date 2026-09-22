@@ -16,8 +16,9 @@ import (
 	"github.com/wanglongan587/cloud/internal/core"
 )
 
-// TestIssueCollaborationMigrationBackfills applies the pre-0008 schema, seeds legacy-shaped rows,
-// then runs Migrate() to confirm 0008 backfills the assignee ActorRef and per-issue comment seq/author.
+// TestIssueCollaborationMigrationBackfills applies the pre-0010 schema (0001-0009, before the
+// issue-collaboration backfill), seeds legacy-shaped rows, then runs Migrate() to confirm
+// 0010 backfills the assignee ActorRef and per-issue comment seq/author.
 func TestIssueCollaborationMigrationBackfills(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -42,10 +43,11 @@ func TestIssueCollaborationMigrationBackfills(t *testing.T) {
 		must(t, admin.Close())
 	})
 
-	// Apply everything before 0008 so issue_comments still has its legacy single-author shape.
+	// Apply everything before 0010 (the issue-collaboration backfill) so issue_comments
+	// still has its legacy single-author shape.
 	_, err = pool.Exec("CREATE TABLE schema_migrations(version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())")
 	must(t, err)
-	for _, version := range []string{"0001_core.sql", "0002_aggregate_guards.sql", "0003_resource_versions.sql", "0004_effect_intent_and_ticket_scope.sql", "0005_gateway_auth.sql", "0006_issues.sql", "0007_issue_extensions.sql"} {
+	for _, version := range []string{"0001_core.sql", "0002_aggregate_guards.sql", "0003_resource_versions.sql", "0004_effect_intent_and_ticket_scope.sql", "0005_gateway_auth.sql", "0006_collab_spaces.sql", "0007_project_space_scope.sql", "0008_issues.sql", "0009_issue_extensions.sql"} {
 		migration, e := os.ReadFile(filepath.Join("..", "internal", "core", "migrations", version))
 		must(t, e)
 		_, e = pool.Exec(string(migration))

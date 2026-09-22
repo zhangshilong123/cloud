@@ -1,85 +1,54 @@
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { afterEach, describe, expect, it } from 'vitest'
-import type { SpaceListItem } from '@/api/generated.schemas'
-import { ProjectDetailPage } from './project-detail-page'
+import { describe, expect, it } from 'vitest'
+import { ProjectDetailPage } from '@/features/projects/project-detail-page'
 import { db } from '@/mocks/data/store'
-import { setCloudSession, TEST_SPACE_ID, TEST_TENANT_ID } from '@/test/cloud-session'
-import { server } from '@/test/msw-server'
+import { installCloudSpaceHandlers, TEST_SPACE_ID, TEST_TENANT_ID } from '@/test/cloud-handlers'
 import { renderAtRoute } from '@/test/render'
-import { useAuthStore } from '@/state/auth-store'
+import { server } from '@/test/msw-server'
 
 const PROJECT_ID = '55555555-5555-5555-5555-555555555555'
-const CURRENT_USER_ID = 'u1' // setCloudSession signs the tab in as u1
 
-function spaceItem(role: string): SpaceListItem {
-  return {
-    id: TEST_SPACE_ID,
-    tenantId: TEST_TENANT_ID,
-    name: 'Team Space',
-    slug: 'team',
-    description: '',
-    role,
-    createdBy: CURRENT_USER_ID,
-    version: 1,
-    createdAt: '2026-09-21T10:00:00+08:00',
-    updatedAt: '2026-09-21T10:00:00+08:00',
-    archivedAt: null,
-  }
-}
-
-function cloudProject(ownerUserId: string) {
+function cloudProject(name: string, lifecycle = 'active', version = 1) {
   return {
     id: PROJECT_ID,
     tenantId: TEST_TENANT_ID,
-    ownerUserId,
-    name: 'ProjectAlpha',
-    repositoryUrl: 'https://example.invalid/repo.git',
-    defaultBranch: 'main',
-    lifecycle: 'active',
+    ownerUserId: 'u1',
     spaceId: TEST_SPACE_ID,
-    version: 1,
-    createdAt: '2026-09-21T10:00:00+08:00',
+    name,
+    repositoryUrl: 'https://example.com/repo.git',
+    defaultBranch: 'main',
     credentialRefId: null,
+    lifecycle,
+    version,
+    createdAt: '2026-09-20T10:00:00+08:00',
     deletedAt: null,
   }
 }
 
-/** Renders the project detail page in cloud mode for a member with `role`. */
-async function renderCloudProject(role: string, ownerUserId: string) {
-  setCloudSession()
+function installProjectHandlers(role: string, project = cloudProject('Demo')) {
+  installCloudSpaceHandlers(role)
   server.use(
-    http.get(`/api/v1/tenants/${TEST_TENANT_ID}/spaces`, () =>
-      HttpResponse.json({ items: [spaceItem(role)], nextCursor: '' }),
-    ),
     http.get(`/api/v1/tenants/${TEST_TENANT_ID}/spaces/${TEST_SPACE_ID}/projects`, () =>
-      HttpResponse.json({ items: [cloudProject(ownerUserId)], nextCursor: '' }),
+      HttpResponse.json({ items: [project], nextCursor: '' }),
     ),
     http.get(`/api/v1/tenants/${TEST_TENANT_ID}/projects/${PROJECT_ID}`, () =>
-      HttpResponse.json(cloudProject(ownerUserId)),
-    ),
-    http.get(`/api/v1/tenants/${TEST_TENANT_ID}/issues`, () =>
-      HttpResponse.json({ items: [], nextCursor: '' }),
-    ),
-    http.get(`/api/v1/tenants/${TEST_TENANT_ID}/members`, () =>
-      HttpResponse.json({ items: [], nextCursor: '' }),
+      HttpResponse.json(project),
     ),
   )
-  renderAtRoute(
+}
+
+function renderDetail() {
+  return renderAtRoute(
     '/:workspaceSlug/projects/:projectId',
-    <ProjectDetailPage slug="team" />,
-    `/team/projects/${PROJECT_ID}`,
+    <ProjectDetailPage slug="cloud-dev" />,
+    `/cloud-dev/projects/${PROJECT_ID}`,
+    { authenticated: true },
   )
-  // The title renders in both the page header h1 and the body h1, so a single
-  // finder throws on the multiple match; wait for at least one instead.
-  expect((await screen.findAllByText('ProjectAlpha')).length).toBeGreaterThan(0)
 }
 
 describe('ProjectDetailPage', () => {
-  afterEach(() => {
-    useAuthStore.getState().clear()
-  })
-
   it('renders the project header and its issues', async () => {
     const project = db.projects[0]
     if (!project) throw new Error('project seed data must not be empty')
@@ -95,24 +64,63 @@ describe('ProjectDetailPage', () => {
     if (!projectIssue) throw new Error('project seed data must contain an issue')
     expect(await screen.findByText(projectIssue.title)).toBeInTheDocument()
   })
+})
 
-  it('shows delete for the member who created the project (creator rule)', async () => {
-    await renderCloudProject('member', CURRENT_USER_ID)
-    expect(screen.getByRole('button', { name: '删除项目' })).toBeInTheDocument()
+describe('ProjectDetailPage cloud mode', () => {
+  it('renames the project with the optimistic version', async () => {
+    installProjectHandlers('owner')
+    let patchBody: Record<string, unknown> | null = null
+    server.use(
+      http.patch(
+        `/api/v1/tenants/${TEST_TENANT_ID}/projects/${PROJECT_ID}`,
+        async ({ request }) => {
+          const body = await request.json()
+          if (typeof body === 'object' && body !== null) {
+            patchBody = body as Record<string, unknown>
+          }
+          return HttpResponse.json(cloudProject('Renamed', 'active', 2))
+        },
+      ),
+    )
+    renderDetail()
+    const user = userEvent.setup()
+
+    await screen.findAllByText('Demo')
+    await user.click(screen.getByRole('button', { name: '重命名' }))
+    await user.type(screen.getByLabelText('名称'), ' Renamed')
+    await user.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(patchBody).not.toBeNull())
+    expect(patchBody).toEqual({ name: 'Demo Renamed', version: 1 })
   })
 
-  it('hides delete for a member who is not the creator', async () => {
-    await renderCloudProject('member', 'u2')
+  it('deletes the project through the lifecycle state machine', async () => {
+    installProjectHandlers('owner')
+    let deleted = false
+    server.use(
+      http.delete(`/api/v1/tenants/${TEST_TENANT_ID}/projects/${PROJECT_ID}`, () => {
+        deleted = true
+        return HttpResponse.json(
+          { resource: cloudProject('Demo', 'deleting', 2), operation: { id: 'o1' } },
+          { status: 202 },
+        )
+      }),
+    )
+    renderDetail()
+    const user = userEvent.setup()
+
+    await screen.findAllByText('Demo')
+    await user.click(screen.getByRole('button', { name: '删除项目' }))
+    await user.click(await screen.findByRole('button', { name: '确认删除' }))
+
+    await waitFor(() => expect(deleted).toBe(true))
+  })
+
+  it('hides the delete action from members', async () => {
+    installProjectHandlers('member')
+    renderDetail()
+    await screen.findAllByText('Demo')
+    expect(screen.getByRole('button', { name: '重命名' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '删除项目' })).not.toBeInTheDocument()
-  })
-
-  it('shows delete for a workspace admin who is not the creator', async () => {
-    await renderCloudProject('admin', 'u2')
-    expect(screen.getByRole('button', { name: '删除项目' })).toBeInTheDocument()
-  })
-
-  it('shows delete for a workspace owner who is not the creator', async () => {
-    await renderCloudProject('owner', 'u2')
-    expect(screen.getByRole('button', { name: '删除项目' })).toBeInTheDocument()
   })
 })

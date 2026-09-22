@@ -200,8 +200,7 @@ export interface ControllerProject {
   repositoryUrl: string;
   /** @nullable */
   secretRef: string | null;
-  /** @nullable */
-  spaceId: string | null;
+  spaceId: string;
   tenantId: string;
   version: number;
 }
@@ -740,8 +739,7 @@ export interface Project {
   name: string;
   ownerUserId: string;
   repositoryUrl: string;
-  /** @nullable */
-  spaceId: string | null;
+  spaceId: string;
   tenantId: string;
   version: number;
 }
@@ -1060,23 +1058,23 @@ export type PostApiV1TenantsTidIssueStatuses200 = {
   resource: IssueStatus;
 };
 
-export type DeleteApiV1TenantsTidIssueStatusesSidBody = {
+export type DeleteApiV1TenantsTidIssueStatusesStidBody = {
   /** @minimum 0 */
   version: number;
 };
 
-export type PutApiV1TenantsTidIssueStatusesSidBodyCategory = typeof PutApiV1TenantsTidIssueStatusesSidBodyCategory[keyof typeof PutApiV1TenantsTidIssueStatusesSidBodyCategory];
+export type PutApiV1TenantsTidIssueStatusesStidBodyCategory = typeof PutApiV1TenantsTidIssueStatusesStidBodyCategory[keyof typeof PutApiV1TenantsTidIssueStatusesStidBodyCategory];
 
 
-export const PutApiV1TenantsTidIssueStatusesSidBodyCategory = {
+export const PutApiV1TenantsTidIssueStatusesStidBodyCategory = {
   unstarted: 'unstarted',
   started: 'started',
   done: 'done',
   closed: 'closed',
 } as const;
 
-export type PutApiV1TenantsTidIssueStatusesSidBody = {
-  category?: PutApiV1TenantsTidIssueStatusesSidBodyCategory;
+export type PutApiV1TenantsTidIssueStatusesStidBody = {
+  category?: PutApiV1TenantsTidIssueStatusesStidBodyCategory;
   color?: string;
   description?: string;
   icon?: string;
@@ -1646,19 +1644,19 @@ export type PostApiV1TenantsTidSpacesBody = {
   slug: string;
 };
 
-export type DeleteApiV1TenantsTidSpacesSpaceIdBody = {
+export type DeleteApiV1TenantsTidSpacesSidBody = {
   /** @minimum 0 */
   version: number;
 };
 
-export type PatchApiV1TenantsTidSpacesSpaceIdBody = {
+export type PatchApiV1TenantsTidSpacesSidBody = {
   description?: string;
   name: string;
   /** @minimum 0 */
   version: number;
 };
 
-export type GetApiV1TenantsTidSpacesSpaceIdMembersParams = {
+export type GetApiV1TenantsTidSpacesSidMembersParams = {
 /**
  * @minimum 1
  * @maximum 100
@@ -1670,36 +1668,45 @@ limit?: number;
 after?: string;
 };
 
-export type GetApiV1TenantsTidSpacesSpaceIdMembers200 = {
+export type GetApiV1TenantsTidSpacesSidMembers200 = {
   items: SpaceMemberListItem[];
   nextCursor: string;
 };
 
-export type PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyRole = typeof PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyRole[keyof typeof PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyRole];
+export type PostApiV1TenantsTidSpacesSidMembersBody = {
+  email: string;
+};
+
+export type DeleteApiV1TenantsTidSpacesSidMembersUidBody = {
+  /** @minimum 0 */
+  version: number;
+};
+
+export type PutApiV1TenantsTidSpacesSidMembersUidBodyRole = typeof PutApiV1TenantsTidSpacesSidMembersUidBodyRole[keyof typeof PutApiV1TenantsTidSpacesSidMembersUidBodyRole];
 
 
-export const PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyRole = {
+export const PutApiV1TenantsTidSpacesSidMembersUidBodyRole = {
   owner: 'owner',
   admin: 'admin',
   member: 'member',
 } as const;
 
-export type PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyStatus = typeof PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyStatus[keyof typeof PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyStatus];
+export type PutApiV1TenantsTidSpacesSidMembersUidBodyStatus = typeof PutApiV1TenantsTidSpacesSidMembersUidBodyStatus[keyof typeof PutApiV1TenantsTidSpacesSidMembersUidBodyStatus];
 
 
-export const PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyStatus = {
+export const PutApiV1TenantsTidSpacesSidMembersUidBodyStatus = {
   active: 'active',
   disabled: 'disabled',
 } as const;
 
-export type PutApiV1TenantsTidSpacesSpaceIdMembersUidBody = {
-  role: PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyRole;
-  status: PutApiV1TenantsTidSpacesSpaceIdMembersUidBodyStatus;
+export type PutApiV1TenantsTidSpacesSidMembersUidBody = {
+  role: PutApiV1TenantsTidSpacesSidMembersUidBodyRole;
+  status: PutApiV1TenantsTidSpacesSidMembersUidBodyStatus;
   /** @minimum 0 */
   version?: number;
 };
 
-export type GetApiV1TenantsTidSpacesSpaceIdProjectsParams = {
+export type GetApiV1TenantsTidSpacesSidProjectsParams = {
 /**
  * @minimum 1
  * @maximum 100
@@ -1711,19 +1718,19 @@ limit?: number;
 after?: string;
 };
 
-export type GetApiV1TenantsTidSpacesSpaceIdProjects200 = {
+export type GetApiV1TenantsTidSpacesSidProjects200 = {
   items: Project[];
   nextCursor: string;
 };
 
-export type PostApiV1TenantsTidSpacesSpaceIdProjectsBody = {
+export type PostApiV1TenantsTidSpacesSidProjectsBody = {
   credentialRefId?: string;
   defaultBranch?: string;
   name: string;
   repositoryUrl: string;
 };
 
-export type PostApiV1TenantsTidSpacesSpaceIdProjects202 = {
+export type PostApiV1TenantsTidSpacesSidProjects202 = {
   operation: Operation;
   resource: Project;
   workspace: Workspace;

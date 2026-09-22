@@ -9,9 +9,9 @@ import {
   getApiV1TenantsTidProjectsPid,
   patchApiV1TenantsTidProjectsPid,
 } from '@/api/projects/projects'
-import { postApiV1TenantsTidSpacesSpaceIdProjects } from '@/api/spaces/spaces'
+import { postApiV1TenantsTidSpacesSidProjects } from '@/api/spaces/spaces'
 import { useCurrentSpace } from '@/features/spaces/current-space'
-import { mutationHeaders, useIdempotencyKeys, useSpaceProjects } from '@/features/spaces/api'
+import { useSpaceProjects } from '@/features/spaces/api'
 import type { ErrorType } from '@/lib/api-client'
 import { mockApi } from '@/lib/mock-api-client'
 import type { Project } from '@/mocks/data/types'
@@ -34,9 +34,7 @@ function statusFor(lifecycle: string): Project['status'] {
 export function cloudProjectToUI(p: CloudProject): Project {
   return {
     id: p.id,
-    // `projects.space_id` stays nullable in this tree (D2); the UI renders
-    // space-scoped projects, so the mapping falls back to the empty id.
-    workspaceId: p.spaceId ?? '',
+    workspaceId: p.spaceId,
     title: p.name,
     description: p.repositoryUrl,
     icon: 'folder-kanban',
@@ -49,7 +47,7 @@ export function cloudProjectToUI(p: CloudProject): Project {
 }
 
 /**
- * Projects of the current workspace. With a cloud session the generated client
+ * Projects of the current space. With a cloud session the generated client
  * fetches the space-scoped project list; without one the mock store keeps
  * powering the demo pages.
  */
@@ -78,7 +76,7 @@ export function useProjects(slug: string): {
   return { data: mock.data, isPending: mock.isPending, isError: mock.isError }
 }
 
-/** One project by id, resolved from the current workspace's project list. */
+/** One project by id, resolved from the current space's project list. */
 export function useProject(
   slug: string,
   id: string | undefined,
@@ -114,24 +112,18 @@ export interface CreateProjectInput {
 export function useCreateProject() {
   const queryClient = useQueryClient()
   const { tenantId, space } = useCurrentSpace()
-  const keyFor = useIdempotencyKeys()
   return useMutation<
-    Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSpaceIdProjects>>,
+    Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSidProjects>>,
     ErrorType<ApiError>,
     CreateProjectInput
   >({
     mutationFn: async (input: CreateProjectInput) => {
       if (!tenantId || !space) throw new Error('cloud space not resolved')
-      return postApiV1TenantsTidSpacesSpaceIdProjects(
-        tenantId,
-        space.id,
-        {
-          name: input.title,
-          repositoryUrl: input.repositoryUrl,
-          defaultBranch: input.defaultBranch,
-        },
-        { headers: mutationHeaders(keyFor(input)) },
-      )
+      return postApiV1TenantsTidSpacesSidProjects(tenantId, space.id, {
+        name: input.title,
+        repositoryUrl: input.repositoryUrl,
+        defaultBranch: input.defaultBranch,
+      })
     },
     onSuccess: () => {
       if (!tenantId || !space) return
@@ -193,7 +185,6 @@ export function useCloudProject(tenantId: string | undefined, projectId: string 
 export function useDeleteProject() {
   const queryClient = useQueryClient()
   const { tenantId, space } = useCurrentSpace()
-  const keyFor = useIdempotencyKeys()
   return useMutation<
     DeleteApiV1TenantsTidProjectsPid202,
     ErrorType<ApiError>,
@@ -201,12 +192,7 @@ export function useDeleteProject() {
   >({
     mutationFn: async (input: { id: string; version: number }) => {
       if (!tenantId) throw new Error('cloud tenant not resolved')
-      return deleteApiV1TenantsTidProjectsPid(
-        tenantId,
-        input.id,
-        { version: input.version },
-        { headers: mutationHeaders(keyFor(input)) },
-      )
+      return deleteApiV1TenantsTidProjectsPid(tenantId, input.id, { version: input.version })
     },
     onSuccess: () => {
       if (!tenantId || !space) return

@@ -94,12 +94,9 @@ func TestSpaceEventsAuthorizationAndCommitOrder(t *testing.T) {
 	f.call("PATCH", f.path("/spaces/"+sid), core.Object{"name": "Stream Renamed", "description": "", "version": space.N("version")}, "", 200)
 	nextEvent(t, stream, "space.updated")
 
-	// The authoritative state matches the event the client was told about. The
-	// evented project is bob's and the list is workspace-shared (Step 3), so it
-	// is checked as bob, the creator.
-	list, status, e := f.client.Call(context.Background(), "GET", f.path("/spaces/"+sid+"/projects"), "gateway", gw, &bob, "", nil)
-	must(t, e)
-	if status != 200 || len(list["items"].([]any)) != 1 {
-		t.Fatalf("project list missing evented project: %d %v", status, list)
+	// The authoritative state matches the event the client was told about.
+	list := f.call("GET", f.path("/spaces/"+sid+"/projects"), nil, "", 200)
+	if len(list["items"].([]any)) != 1 {
+		t.Fatal("project list missing evented project")
 	}
 }

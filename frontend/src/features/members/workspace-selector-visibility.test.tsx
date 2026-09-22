@@ -2,17 +2,25 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { afterEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { DashboardLayout } from '@/components/layout/dashboard-layout'
 import type { SpaceListItem } from '@/api/generated.schemas'
-import { setCloudSession, TEST_SPACE_ID, TEST_TENANT_ID } from '@/test/cloud-session'
+import { TEST_SPACE_ID, TEST_TENANT_ID } from '@/test/cloud-handlers'
 import { server } from '@/test/msw-server'
-import { useAuthStore } from '@/state/auth-store'
-import { useDemoAuthStore } from '@/state/demo-auth-store'
 
 const TEAM_SLUG = 'team'
 const NEW_SLUG = 'platform'
+
+/** Gateway current-user fact; the cookie session is represented by this only. */
+const currentUser = {
+  id: '00000000-0000-4000-8000-000000000001',
+  displayName: 'Alice',
+  status: 'active',
+  version: 1,
+  createdAt: '2026-09-21T00:00:00Z',
+  deletedAt: null,
+}
 
 function spaceItem(id: string, name: string, slug: string, role: string): SpaceListItem {
   return {
@@ -66,13 +74,21 @@ async function openSwitcher(name: string) {
 }
 
 describe('Workspace selector visibility for a newly enrolled member', () => {
-  afterEach(() => {
-    useAuthStore.getState().clear()
-    useDemoAuthStore.getState().clear()
+  // The Gateway cookie is represented by a resolved /api/v1/me; the tenant and
+  // the mutable spaces list drive what the selector may list.
+  beforeEach(() => {
+    server.use(
+      http.get('/api/v1/me', () => HttpResponse.json(currentUser)),
+      http.get('/api/v1/me/tenants', () =>
+        HttpResponse.json({
+          items: [{ id: TEST_TENANT_ID, name: '研发组织', status: 'active', role: 'admin' }],
+          nextCursor: '',
+        }),
+      ),
+    )
   })
 
   it('does not list a workspace before enrollment, then shows and switches to it after refresh', async () => {
-    setCloudSession()
     const user = userEvent.setup()
     // First load: B joined only the default/team space; the newly-added W is absent.
     let spaces: SpaceListItem[] = [spaceItem(TEST_SPACE_ID, 'Team Space', TEAM_SLUG, 'member')]

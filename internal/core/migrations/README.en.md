@@ -26,20 +26,30 @@ Migrations are executed in ascending numerical sequence:
 - **`0005_gateway_auth.sql`**: Gateway authentication tables (accessed at runtime only by `cmd/gateway`):
   - `gateway_login_attempts`: one-shot login attempts; stores only SHA-256 digests of the attempt secret and `state`, rejects absolute, `//` and `/\` `return_to` values at the database layer, bounds the lifetime to one hour, and uses `consumed_at` to guarantee at most one session per attempt.
   - `gateway_sessions`: browser sessions; stores only the token digest, requires a non-null `expires_at` no later than 90 days after creation, keeps revocation time and the bounded `revoked_reason` together, and indexes identity revocation and bounded cleanup.
-- **`0006_issues.sql`**: the `issues` (board) base table (formerly `0005_issues.sql`; forward-renumbered in the workspace integration to keep upstream numbering stable).
-- **`0007_issue_extensions.sql`**: `issue_statuses`, `issue_comments`, `labels`, `issue_labels`, `issue_subscribers`, `issue_views` + `issues` ALTERs (`number`, `properties`, status format check). (formerly `0006_issue_extensions.sql`)
-- **`0008_issue_collaboration.sql`**: `issues` ALTERs (`assignee_type`/`assignee_id`/`project_ref` + backfill), `issue_comments` ALTERs (`parent_id`/`author_type`/`author_id`/`seq` + backfill + `UNIQUE(issue_id,seq)`), new tables `issue_runs`, `issue_activities`, `issue_context_refs`. (formerly `0007_issue_collaboration.sql`)
-- **`0009_issue_interactions.sql`**: new table `issue_interactions` (the `@` interaction spine) — one row per selected collaboration target: `id, tenant_id, issue_id, comment_id, target_type, target_id, mode, task, run_id, created_at`. (formerly `0008_issue_interactions.sql`)
-- **`0010_issue_interaction_input.sql`**: one generic additive column: `ALTER TABLE issue_interactions ADD COLUMN input jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(input)='object')` — the confirmed form values. Deliberately excludes `version`, a `status` enum, `confirmed_at` and a separate inputs table; `0009` is not modified. (formerly `0009_issue_interaction_input.sql`)
-- **`0011_collab_spaces.sql`** *(incoming collaboration-space migrations from `zpc001/feat/collab-spaces`, forward-renumbered to sit after the Issues sequence)*: Collaboration Space schema:
-  - `collab_workspaces`: tenant-scoped collaboration and visibility boundary (name, immutable slug, archive time, optimistic version). Archiving is a soft delete and does not release the slug: `UNIQUE(tenant_id, slug)` covers live and archived rows alike.
+- **`0006_collab_spaces.sql`**: Collaboration space schema (product term Workspace):
+  - `collab_workspaces`: tenant-scoped collaboration and visibility boundary (name, immutable slug, archive time, optimistic version).
   - `collab_workspace_members`: members with roles (owner/admin/member), status (active/disabled), and optimistic version.
-  - Strictly separated from the runtime `workspaces` table (Runtime Workspace, execution environments).
-- **`0012_project_space_scope.sql`** *(see 0011)*: Optional Project-to-Space association:
-  - Creates a default Space (slug=`default`) for every existing tenant, including deleted tenants that still own projects.
-  - Adds existing active tenant members to the default Space (admin maps to owner, member maps to member).
-  - Adds a nullable `projects.space_id uuid`: a Project's Space association is optional (D2=C — a Space is an optional grouping, not a mandatory parent). Existing Projects are **not** backfilled and the column is **not** made NOT NULL; Projects without a `space_id` behave exactly as before.
-  - A composite foreign key `(space_id, tenant_id) REFERENCES collab_workspaces(id, tenant_id)` rejects cross-tenant ownership at the SQL level, and the `project_space_list(space_id, id)` index supports listing Projects by Space.
+  - Strictly separated from the runtime `workspaces` table (execution environments).
+- **`0007_project_space_scope.sql`**: Project space scoping and data backfill:
+  - Creates a default space (slug=`default`) for every existing tenant, including deleted tenants that still own projects.
+  - Adds existing active tenant members to the default space (admin maps to owner, member maps to member).
+  - Backfills `projects.space_id`, then enforces NOT NULL and a composite foreign key `(space_id, tenant_id)` that rejects cross-tenant ownership at the SQL level.
+  - Runs `SET CONSTRAINTS ALL IMMEDIATE` before the ALTER to flush deferred constraint triggers queued by the backfill UPDATE.
+- **`0008_issues.sql`**: the `issues` (board) base table.
+- **`0009_issue_extensions.sql`**: `issue_statuses`, `issue_comments`, `labels`, `issue_labels`, `issue_subscribers`, `issue_views` + `issues` ALTERs (`number`, `properties`, status format check).
+- **`0010_issue_collaboration.sql`**: `issues` ALTERs (`assignee_type`/`assignee_id`/`project_ref` + backfill), `issue_comments` ALTERs (`parent_id`/`author_type`/`author_id`/`seq` + backfill + `UNIQUE(issue_id,seq)`), new tables `issue_runs`, `issue_activities`, `issue_context_refs`.
+- **`0011_issue_interactions.sql`**: new table `issue_interactions` (the `@` interaction spine) — one row per selected collaboration target: `id, tenant_id, issue_id, comment_id, target_type, target_id, mode, task, run_id, created_at`.
+- **`0012_issue_interaction_input.sql`**: one generic additive column: `ALTER TABLE issue_interactions ADD COLUMN input jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(input)='object')` — the confirmed form values. Deliberately excludes `version`, a `status` enum, `confirmed_at` and a separate inputs table; `0011` is not modified.
+
+> Renumbering note (upstream-merge alignment): this branch's collab-space migrations
+> `0011_collab_spaces.sql` / `0012_project_space_scope.sql` overlapped upstream's
+> `0006_collab_spaces.sql` / `0007_project_space_scope.sql`; **upstream numbering and semantics win**,
+> so the duplicates were removed and only upstream's 0006/0007 remain. The Issue migrations were
+> renumbered to keep the line strictly forward-ordered (schema semantics unchanged):
+> `0006_issues.sql` → `0008_issues.sql`, `0007_issue_extensions.sql` → `0009_issue_extensions.sql`,
+> `0008_issue_collaboration.sql` → `0010_issue_collaboration.sql`,
+> `0009_issue_interactions.sql` → `0011_issue_interactions.sql`,
+> `0010_issue_interaction_input.sql` → `0012_issue_interaction_input.sql`.
 
 ## Checksum integrity and immutability
 

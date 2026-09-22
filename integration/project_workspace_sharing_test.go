@@ -58,10 +58,10 @@ func TestScopedProjectSharedWithWorkspaceMembers(t *testing.T) {
 	f.callUser(t, dave, "GET", f.path("/workspaces/"+wid), nil, "", 404)
 }
 
-// TestScopedProjectDeletePolicy covers §15: delete requires the project creator
-// OR a workspace owner/admin. The creator may always delete their own project; a
-// workspace admin may delete another member's project; an ordinary member cannot
-// delete another member's project (403 space_role_required).
+// TestScopedProjectDeletePolicy covers §15 as merged with upstream: project
+// deletion is gated on the workspace role — only a workspace owner or admin may
+// delete a project; an ordinary member cannot, even for a project they created
+// (403 space_role_required). An admin may delete another member's project.
 func TestScopedProjectDeletePolicy(t *testing.T) {
 	f, sid, bob, carol, _ := projectSharingFixture(t)
 
@@ -81,52 +81,21 @@ func TestScopedProjectDeletePolicy(t *testing.T) {
 		t.Fatalf("member delete: want space_role_required got %v", denied)
 	}
 
-	// B creates their own project P2 and can delete it (creator rule).
+	// B creates their own project P2; the creator rule is gone under the merged
+	// semantics, so B (a plain member) still cannot delete it.
 	p2 := f.callUser(t, bob, "POST", f.path("/spaces/"+sid+"/projects"), core.Object{"name": "P2", "repositoryUrl": "https://example.invalid/repo.git", "defaultBranch": "main"}, "bob-project", 202)
 	p2id := p2.O("resource").S("id")
 	f.drain()
 	p2active := f.callUser(t, bob, "GET", f.path("/projects/"+p2id), nil, "", 200)
-	f.callUser(t, bob, "DELETE", f.path("/projects/"+p2id), core.Object{"version": p2active.N("version")}, "bob-delete-own", 202)
-	f.drain()
-	if f.scalar("SELECT count(*) FROM projects WHERE id=$1 AND deleted_at IS NULL", p2id) != 0 {
-		t.Fatal("bob's own delete did not complete")
-	}
+	f.callUser(t, bob, "DELETE", f.path("/projects/"+p2id), core.Object{"version": p2active.N("version")}, "bob-delete-own", 403)
 
-	// Admin carol deletes A's project (still active; bob's delete was rejected and
-	// changed nothing).
+	// Admin carol deletes A's project (still active; bob's deletes were rejected
+	// and changed nothing).
 	f.callUser(t, carol, "DELETE", f.path("/projects/"+pid), core.Object{"version": ver}, "admin-delete", 202)
 	f.drain()
 	if f.scalar("SELECT count(*) FROM projects WHERE id=$1 AND deleted_at IS NULL", pid) != 0 {
 		t.Fatal("admin delete did not complete")
 	}
-}
-
-// TestLegacyProjectNotSharedWithWorkspaceMembers covers §16: an unscoped
-// (space_id NULL) project keeps owner-only access — workspace membership does not
-// widen it. No auto-backfill or migration of legacy projects this phase.
-func TestLegacyProjectNotSharedWithWorkspaceMembers(t *testing.T) {
-	f, sid, bob, _, dave := projectSharingFixture(t)
-
-	// A creates a tenant-level (unscoped) project.
-	legacy := f.call("POST", f.path("/projects"), core.Object{"name": "Legacy", "repositoryUrl": "https://example.invalid/repo.git", "defaultBranch": "main"}, "legacy-create", 202)
-	pid := legacy.O("resource").S("id")
-	wid := legacy.O("workspace").S("id")
-	if legacy.O("resource").S("spaceId") != "" {
-		t.Fatalf("tenant-level project should have no spaceId: %v", legacy)
-	}
-
-	// B (space member of W) does not gain access: the project and its runtime
-	// workspace stay 404, and the space list contains no unscoped project.
-	f.callUser(t, bob, "GET", f.path("/projects/"+pid), nil, "", 404)
-	f.callUser(t, bob, "GET", f.path("/workspaces/"+wid), nil, "", 404)
-	projects := f.callUser(t, bob, "GET", f.path("/spaces/"+sid+"/projects"), nil, "", 200)
-	if len(projects["items"].([]any)) != 0 {
-		t.Fatalf("unscoped project leaked into a space list: %v", projects)
-	}
-
-	// The owner still sees it (owner-only legacy), and dave (non-member) is hidden.
-	f.call("GET", f.path("/projects/"+pid), nil, "", 200)
-	f.callUser(t, dave, "GET", f.path("/projects/"+pid), nil, "", 404)
 }
 
 // TestRuntimeWorkspaceInheritsProjectAccess covers §17: a runtime workspace

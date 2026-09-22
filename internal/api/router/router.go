@@ -40,8 +40,8 @@ func Routes() []Route {
 		{"POST", "/api/v1/tenants/:tid/issues/:iid/move", "", []string{"status", "beforeId", "afterId", "version"}},
 		{"GET", "/api/v1/tenants/:tid/issue-statuses", "", nil},
 		{"POST", "/api/v1/tenants/:tid/issue-statuses", "", []string{"key", "name", "description", "category", "color", "icon"}},
-		{"PUT", "/api/v1/tenants/:tid/issue-statuses/:sid", "", []string{"name", "description", "category", "color", "icon", "position", "version"}},
-		{"DELETE", "/api/v1/tenants/:tid/issue-statuses/:sid", "", []string{"version"}},
+		{"PUT", "/api/v1/tenants/:tid/issue-statuses/:stid", "", []string{"name", "description", "category", "color", "icon", "position", "version"}},
+		{"DELETE", "/api/v1/tenants/:tid/issue-statuses/:stid", "", []string{"version"}},
 		{"GET", "/api/v1/tenants/:tid/labels", "", nil},
 		{"POST", "/api/v1/tenants/:tid/labels", "", []string{"name", "color"}},
 		{"PUT", "/api/v1/tenants/:tid/labels/:lid", "", []string{"name", "color", "version"}},
@@ -89,15 +89,15 @@ func Routes() []Route {
 		{"POST", "/api/v1/tenants/:tid/workspaces/:wid/administrative-stop", "", []string{"version"}},
 		{"GET", "/api/v1/tenants/:tid/spaces", "", nil},
 		{"POST", "/api/v1/tenants/:tid/spaces", "", []string{"name", "slug", "description"}},
-		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId", "", nil},
-		{"PATCH", "/api/v1/tenants/:tid/spaces/:spaceId", "", []string{"name", "description", "version"}},
-		{"DELETE", "/api/v1/tenants/:tid/spaces/:spaceId", "", []string{"version"}},
-		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/members", "", nil},
-		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/members", "", []string{"email"}},
-		{"PUT", "/api/v1/tenants/:tid/spaces/:spaceId/members/:uid", "", []string{"role", "status", "version"}},
-		{"DELETE", "/api/v1/tenants/:tid/spaces/:spaceId/members/:uid", "", []string{"version"}},
-		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/projects", "", nil},
-		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/projects", "", []string{"name", "repositoryUrl", "defaultBranch", "credentialRefId"}},
+		{"GET", "/api/v1/tenants/:tid/spaces/:sid", "", nil},
+		{"PATCH", "/api/v1/tenants/:tid/spaces/:sid", "", []string{"name", "description", "version"}},
+		{"DELETE", "/api/v1/tenants/:tid/spaces/:sid", "", []string{"version"}},
+		{"GET", "/api/v1/tenants/:tid/spaces/:sid/members", "", nil},
+		{"POST", "/api/v1/tenants/:tid/spaces/:sid/members", "", []string{"email"}},
+		{"PUT", "/api/v1/tenants/:tid/spaces/:sid/members/:uid", "", []string{"role", "status", "version"}},
+		{"DELETE", "/api/v1/tenants/:tid/spaces/:sid/members/:uid", "", []string{"version"}},
+		{"GET", "/api/v1/tenants/:tid/spaces/:sid/projects", "", nil},
+		{"POST", "/api/v1/tenants/:tid/spaces/:sid/projects", "", []string{"name", "repositoryUrl", "defaultBranch", "credentialRefId"}},
 		{"POST", "/internal/v1/access", "access", []string{"tenantId", "workspaceId", "action", "epoch"}},
 		{"POST", "/internal/v1/admissions", "admit", []string{"tenantId", "workspaceId", "action", "ticketId", "kind", "epoch"}},
 		{"POST", "/internal/v1/controller-lease/acquire", "lease_acquire", []string{}},
@@ -213,7 +213,7 @@ func New(store *core.Store, auth *core.Authenticator, log *zap.Logger) *gin.Engi
 						return
 					}
 				}
-				out, status, e = store.Public(c.Request.Context(), &core.PublicRequest{Method: c.Request.Method, Path: c.Request.URL.Path, TenantID: c.Param("tid"), ProjectID: c.Param("pid"), WorkspaceID: c.Param("wid"), SpaceID: c.Param("spaceId"), OperationID: c.Param("oid"), UserID: c.Param("uid"), IssueID: c.Param("iid"), CommentID: c.Param("cid"), LabelID: c.Param("lid"), StatusID: c.Param("sid"), ViewID: c.Param("vid"), RunID: c.Param("rid"), ContextRefID: c.Param("crid"), InteractionID: c.Param("ixid"), FormRef: c.Param("formRef"), Key: c.GetHeader("Idempotency-Key"), Limit: limit, After: c.Query("after"), Query: c.Query("q"), GroupBy: c.Query("by"), Body: body, Identity: user})
+				out, status, e = store.Public(c.Request.Context(), &core.PublicRequest{Method: c.Request.Method, Path: c.Request.URL.Path, TenantID: c.Param("tid"), ProjectID: c.Param("pid"), WorkspaceID: c.Param("wid"), SpaceID: c.Param("sid"), OperationID: c.Param("oid"), UserID: c.Param("uid"), IssueID: c.Param("iid"), CommentID: c.Param("cid"), LabelID: c.Param("lid"), StatusID: c.Param("stid"), ViewID: c.Param("vid"), RunID: c.Param("rid"), ContextRefID: c.Param("crid"), InteractionID: c.Param("ixid"), FormRef: c.Param("formRef"), Key: c.GetHeader("Idempotency-Key"), Limit: limit, After: c.Query("after"), Query: c.Query("q"), GroupBy: c.Query("by"), Body: body, Identity: user})
 			} else {
 				out, e = store.Control(c.Request.Context(), &core.ControlRequest{Action: route.Action, OperationID: c.Param("oid"), EffectID: c.Param("eid"), TicketID: c.Param("ticket"), Body: body, Service: service, Identity: user})
 			}
@@ -228,7 +228,7 @@ func New(store *core.Store, auth *core.Authenticator, log *zap.Logger) *gin.Engi
 			c.JSON(status, out)
 		})
 	}
-	r.GET("/api/v1/tenants/:tid/spaces/:spaceId/events", func(c *gin.Context) { sseEvents(store, auth, c) })
+	r.GET("/api/v1/tenants/:tid/spaces/:sid/events", func(c *gin.Context) { sseEvents(store, auth, c) })
 	r.NoRoute(func(c *gin.Context) { failure(c, &core.Fault{Code: "not_found", Status: 404, Params: core.Object{}}) })
 	return r
 }
@@ -243,7 +243,7 @@ func sseEvents(store *core.Store, auth *core.Authenticator, c *gin.Context) {
 		failure(c, fault)
 		return
 	}
-	tid, sid := c.Param("tid"), c.Param("spaceId")
+	tid, sid := c.Param("tid"), c.Param("sid")
 	out, status, e := store.Public(c.Request.Context(), &core.PublicRequest{Method: "GET", Path: "/api/v1/tenants/" + tid + "/spaces/" + sid, TenantID: tid, SpaceID: sid, Identity: user})
 	if e != nil {
 		failure(c, core.ErrorCode(e))

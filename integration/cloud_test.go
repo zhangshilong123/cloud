@@ -225,6 +225,20 @@ func (f *fixture) call(method, path string, body core.Object, key string, want i
 	return o
 }
 func (f *fixture) path(s string) string { return "/api/v1/tenants/" + f.tid + s }
+
+// callUser runs a public request as the given final user and asserts the status.
+// The fixture's f.call always acts as the bootstrap owner (alice); owner-isolation
+// scenarios need to act as a specific space member.
+func (f *fixture) callUser(t *testing.T, u core.Claims, method, path string, body core.Object, key string, want int) core.Object {
+	t.Helper()
+	gw := core.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "gateway-a"}}
+	o, status, e := f.client.Call(context.Background(), method, path, "gateway", gw, &u, key, body)
+	must(t, e)
+	if status != want {
+		t.Fatalf("%s %s: want %d got %d %v", method, path, want, status, o)
+	}
+	return o
+}
 func (f *fixture) create(key string) core.Object {
 	return f.call("POST", f.path("/projects"), core.Object{"name": "Project", "repositoryUrl": "https://example.invalid/repo.git", "defaultBranch": "main"}, key, 202)
 }
@@ -409,12 +423,14 @@ func TestIdentityConcurrencyMembershipAndIsolation(t *testing.T) {
 	f.drain()
 	pid, wid := created.O("resource").S("id"), created.O("workspace").S("id")
 	f.user.Subject = "new-user"
-	f.call("GET", f.path("/projects/"+pid), nil, "", 404)
-	f.call("GET", f.path("/workspaces/"+wid), nil, "", 404)
+	// Joining the tenant grants default-space membership, so the project and its
+	// runtime workspace become shared; operations stay scoped to their actor.
+	f.call("GET", f.path("/projects/"+pid), nil, "", 200)
+	f.call("GET", f.path("/workspaces/"+wid), nil, "", 200)
 	f.call("GET", f.path("/operations/"+created.O("operation").S("id")), nil, "", 404)
 	list := f.call("GET", f.path("/projects"), nil, "", 200)
-	if len(list["items"].([]any)) != 0 {
-		t.Fatal("list owner filter missing")
+	if len(list["items"].([]any)) != 1 {
+		t.Fatal("space membership must expose the shared project")
 	}
 	f.user.Subject = "alice"
 	f.call("PUT", f.path("/members/"+id), core.Object{"role": "admin", "status": "active", "version": 1}, "", 200)

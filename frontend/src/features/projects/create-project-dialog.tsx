@@ -18,7 +18,7 @@ function looksLikeRepositoryUrl(value: string): boolean {
   return /^(https:\/\/|ssh:\/\/|git@)/.test(value.trim())
 }
 
-/** Form fields for a new project in the current workspace. */
+/** Form fields for a new project in the current space. */
 function CreateProjectFields({
   onSubmit,
   pending,
@@ -76,7 +76,7 @@ function CreateProjectFields({
 }
 
 /**
- * Dialog for creating a project inside the current workspace. Creation is
+ * Dialog for creating a project inside the current space. Creation is
  * asynchronous on the backend (202 + operation), so the dialog closes
  * immediately and the list invalidates when the operation lands.
  */

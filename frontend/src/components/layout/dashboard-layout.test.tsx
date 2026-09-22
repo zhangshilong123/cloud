@@ -1,28 +1,39 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createMemoryRouter, RouterProvider } from 'react-router-dom'
-import { useAuthStore } from '@/state/auth-store'
+import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom'
+import { db } from '@/mocks/data/store'
+import { installCloudSpaceHandlers, TEST_TENANT_ID } from '@/test/cloud-handlers'
 import { server } from '@/test/msw-server'
 import { DashboardLayout } from './dashboard-layout'
 
-const session = {
-  user: { id: 'u1', displayName: 'Alice', subject: 'subj' },
-  tenantId: 't1',
-  tenantName: 'Acme',
+const currentUser = {
+  id: '00000000-0000-4000-8000-000000000001',
+  displayName: 'Wang Longan',
+  status: 'active',
+  version: 1,
+  createdAt: '2026-09-21T00:00:00Z',
+  deletedAt: null,
+}
+
+function LoginScreen() {
+  const location = useLocation()
+  return <div>Login screen {location.search}</div>
 }
 
 function renderRouter(initialPath: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(
     [
-      { path: '/login', element: <div>Login screen</div> },
+      { path: '/login', element: <LoginScreen /> },
       {
         path: '/:workspaceSlug',
         element: <DashboardLayout />,
-        children: [{ path: 'issues', element: <div>Issues screen</div> }],
+        children: [
+          { path: 'issues', element: <div>Issues screen</div> },
+          { path: 'projects', element: <div>Projects screen</div> },
+        ],
       },
     ],
     { initialEntries: [initialPath] },
@@ -36,38 +47,64 @@ function renderRouter(initialPath: string) {
 
 describe('DashboardLayout', () => {
   beforeEach(() => {
-    useAuthStore.getState().clear()
+    server.use(http.get('/api/v1/me', () => HttpResponse.json(currentUser)))
+    installCloudSpaceHandlers('owner')
   })
 
-  it('redirects to /login when there is no session', async () => {
-    renderRouter('/t1/issues')
-    expect(await screen.findByText('Login screen')).toBeInTheDocument()
+  it('redirects to /login with the complete target when there is no session', async () => {
+    server.use(
+      http.get('/api/v1/me', () =>
+        HttpResponse.json(
+          { code: 'unauthenticated', params: {}, requestId: 'request-1' },
+          { status: 401 },
+        ),
+      ),
+    )
+    renderRouter(`/${db.workspace.slug}/issues?tab=mine#today`)
+    expect(
+      await screen.findByText(
+        `Login screen ?returnTo=%2F${db.workspace.slug}%2Fissues%3Ftab%3Dmine%23today`,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('redirects an unknown space slug to the first joined real space', async () => {
+    renderRouter('/some-other-workspace/issues')
+    expect(await screen.findByText('Projects screen')).toBeInTheDocument()
   })
 
   it('renders the matched child route once authenticated', async () => {
-    useAuthStore.getState().setSession(session)
-    renderRouter('/t1/issues')
+    renderRouter('/cloud-dev/issues')
     expect(await screen.findByText('Issues screen')).toBeInTheDocument()
   })
 
-  it('shows the onboarding create-workspace CTA for a cloud session with zero workspaces', async () => {
-    useAuthStore.getState().setSession(session)
-    // A legal 0-workspace state: an empty space list renders the onboarding
-    // empty state, not a crash, a redirect or a fake workspace.
+  it('shows a disabled account without redirecting to login', async () => {
     server.use(
-      http.get(`/api/v1/tenants/${session.tenantId}/spaces`, () =>
+      http.get('/api/v1/me', () =>
+        HttpResponse.json(
+          { code: 'user_disabled', params: {}, requestId: 'request-2' },
+          { status: 403 },
+        ),
+      ),
+    )
+    renderRouter('/cloud-dev/issues')
+    expect(await screen.findByText('账号已被停用')).toBeInTheDocument()
+  })
+
+  it('shows an empty state instead of demo data when the user joined no space', async () => {
+    server.use(
+      http.get('/api/v1/me/tenants', () =>
+        HttpResponse.json({
+          items: [{ id: TEST_TENANT_ID, name: '研发组织', status: 'active', role: 'admin' }],
+          nextCursor: '',
+        }),
+      ),
+      http.get(`/api/v1/tenants/${TEST_TENANT_ID}/spaces`, () =>
         HttpResponse.json({ items: [], nextCursor: '' }),
       ),
     )
-    renderRouter('/t1/issues')
-
-    expect(await screen.findByText('你还没有加入任何工作区')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument()
-
-    // The primary CTA opens the create-space dialog (creator becomes owner).
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: '创建工作区' }))
-    expect(await screen.findByText('新建空间')).toBeInTheDocument()
-    expect(screen.getByText('创建后你自动成为所有者（owner）。')).toBeInTheDocument()
+    renderRouter('/default/issues')
+    expect(await screen.findByText(/尚未加入任何工作区/)).toBeInTheDocument()
+    expect(screen.queryByText('Issues screen')).not.toBeInTheDocument()
   })
 })

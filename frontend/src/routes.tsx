@@ -17,13 +17,10 @@ import { RuntimesPage } from '@/features/runtimes/runtimes-page'
 import { GeneralSettingsPage } from '@/features/settings/general-settings-page'
 import { SettingsLayout } from '@/features/settings/settings-layout'
 import { SkillsPage } from '@/features/skills/skills-page'
-import { SpacesPage } from '@/features/spaces/spaces-page'
 import { SquadDetailPage } from '@/features/squads/squad-detail-page'
 import { SquadsPage } from '@/features/squads/squads-page'
 import { useCurrentSpace } from '@/features/spaces/current-space'
 import { db } from '@/mocks/data/store'
-import { useAuthStore } from '@/state/auth-store'
-import { useDemoAuthStore } from '@/state/demo-auth-store'
 
 /**
  * DashboardLayout only renders its children once :workspaceSlug matches a real
@@ -49,17 +46,11 @@ function CloudScope({ component: Component }: { component: ComponentType<{ slug:
   return <Component slug={tenantId} />
 }
 
-/** Lands each session plane on its home route; otherwise the sign-in screen. */
-function RootRedirect() {
-  const tenantId = useAuthStore((s) => s.tenantId)
-  const demoToken = useDemoAuthStore((s) => s.token)
-  if (tenantId) return <Navigate to="/default/projects" replace />
-  if (demoToken) return <Navigate to={`/${db.workspace.slug}/issues`} replace />
-  return <Navigate to="/login" replace />
-}
-
 export const router = createBrowserRouter([
-  { path: '/', element: <RootRedirect /> },
+  // Authentication is verified by DashboardLayout against /api/v1/me: an
+  // unknown root resolves to the demo workspace and is redirected to /login or
+  // to the signed-in member's first real space there.
+  { path: '/', element: <Navigate to={`/${db.workspace.slug}/issues`} replace /> },
   { path: '/login', element: <LoginPage /> },
   {
     path: '/:workspaceSlug',
@@ -69,7 +60,6 @@ export const router = createBrowserRouter([
       { path: 'issues', element: <CloudScope component={IssuesPage} /> },
       { path: 'issues/:issueId', element: <CloudScope component={IssueDetailPage} /> },
       { path: 'my-issues', element: <CloudScope component={MyIssuesPage} /> },
-      { path: 'spaces', element: <SpacesPage /> },
       { path: 'projects', element: <WithSlug component={ProjectsPage} /> },
       { path: 'projects/:projectId', element: <WithSlug component={ProjectDetailPage} /> },
       { path: 'squads', element: <WithSlug component={SquadsPage} /> },

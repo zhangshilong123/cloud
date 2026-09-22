@@ -1,25 +1,20 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { useGetApiV1MeTenants } from '@/api/me/me'
 import type { SpaceListItem } from '@/api/generated.schemas'
 import { useSpaces } from '@/features/spaces/api'
-import { useAuthStore } from '@/state/auth-store'
 
 /**
- * Current-workspace context: resolves the route's `:workspaceSlug` (a
- * collaboration-space slug, e.g. `/default`) against the real spaces list when
- * a cloud session exists, and exposes the tenant id every tenant-scoped API
- * needs. Pages use {@link useCurrentSpace} to decide between cloud data and the
- * mock store without touching routing.
- *
- * Cloud mode is judged from the persisted ora-web cookie session (`tenantId`),
- * not from separately stored credentials: the cookie is the authoritative
- * session, and the browser never holds JWTs.
+ * Current-space context: resolves the route's `:workspaceSlug` against the
+ * real spaces list after Gateway authentication, and exposes the tenant id
+ * every tenant-scoped API needs. Pages use {@link useCurrentSpace} to decide
+ * between cloud data and the mock store without touching routing.
  */
 export interface CurrentSpaceValue {
-  /** True while the tab holds an ora-web cookie session. */
+  /** True when the parent layout has verified a Gateway-backed Cloud identity. */
   cloudMode: boolean
-  /** Tenant id of the cloud session, present only in cloud mode. */
+  /** Tenant id of the cloud session (development uses the first tenant). */
   tenantId: string | undefined
-  /** Spaces the signed-in member joined (undefined while loading). */
+  /** Spaces the signed-in member joined. */
   spaces: SpaceListItem[] | undefined
   /** The space matching the active route slug, when one exists. */
   space: SpaceListItem | undefined
@@ -27,9 +22,19 @@ export interface CurrentSpaceValue {
 
 const CurrentSpaceContext = createContext<CurrentSpaceValue | null>(null)
 
-export function CurrentSpaceProvider({ slug, children }: { slug: string; children: ReactNode }) {
-  const tenantId = useAuthStore((s) => s.tenantId) ?? undefined
-  const cloudMode = tenantId != null
+/** Resolves the active space; callers enable Cloud queries only after `/api/v1/me` succeeds. */
+export function CurrentSpaceProvider({
+  slug,
+  authenticated = false,
+  children,
+}: {
+  slug: string
+  authenticated?: boolean
+  children: ReactNode
+}) {
+  const cloudMode = authenticated
+  const tenants = useGetApiV1MeTenants(undefined, { query: { enabled: cloudMode } })
+  const tenantId = tenants.data?.items[0]?.id
   const spacesQuery = useSpaces(tenantId)
   const spaces = spacesQuery.data?.items
   const space = spaces?.find((candidate) => candidate.slug === slug)

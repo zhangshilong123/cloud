@@ -8,6 +8,24 @@ import { create, type AxiosError, type AxiosRequestConfig } from 'axios'
  */
 export const AXIOS_INSTANCE = create({ baseURL: '' })
 
+// The browser carries only the Gateway's HttpOnly Cookie. POST and DELETE
+// additionally receive a fresh idempotency key when the caller did not supply
+// one: the Cloud core rejects them without it. The interceptor is synchronous
+// so an AbortSignal can still win the dispatch race.
+AXIOS_INSTANCE.interceptors.request.use(
+  (config) => {
+    if (
+      (config.method === 'post' || config.method === 'delete') &&
+      !config.headers.get('Idempotency-Key')
+    ) {
+      config.headers.set('Idempotency-Key', crypto.randomUUID())
+    }
+    return config
+  },
+  undefined,
+  { synchronous: true },
+)
+
 /**
  * Request shape the orval-generated client passes to {@link customInstance}.
  *

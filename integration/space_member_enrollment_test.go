@@ -120,9 +120,9 @@ func TestEnrollAlreadyMemberIdempotent(t *testing.T) {
 	if f.workspaceMemberCount(sid, bobID) != 1 {
 		t.Fatal("duplicate add created a second membership row")
 	}
-	// A re-add never mutates an existing member's role. (Under Step 3A the owner
-	// role is immutable — only the creator is ever an owner, never granted via the
-	// member API — so an admin is the highest role a re-add could touch.)
+	// A re-add never mutates an existing member's role: enrollment only ever
+	// resolves the email to a registered user and ensures a membership row, so an
+	// existing admin stays an admin.
 	_, adminID := f.registerUser(t, "admin2@example.com", "Admin2")
 	f.enrollByEmail(sid, "admin2@example.com", "enroll-admin2")
 	f.call("PUT", f.path("/spaces/"+sid+"/members/"+adminID), core.Object{"role": "admin", "status": "active", "version": 1}, "", 200)

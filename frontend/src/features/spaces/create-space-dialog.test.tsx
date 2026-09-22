@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { CreateSpaceDialog } from '@/features/spaces/create-space-dialog'
 import { renderWithProviders } from '@/test/render'
 import { server } from '@/test/msw-server'
@@ -21,10 +21,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 describe('CreateSpaceDialog', () => {
-  afterEach(() => {
-    sessionStorage.clear()
-  })
-
   it('creates a space through the cloud API and reports the normalized slug', async () => {
     let postedName = ''
     let postedSlug = ''

@@ -1,183 +1,117 @@
-import type { AxiosAdapter, AxiosResponse, InternalAxiosRequestConfig } from 'axios'
+import { http, HttpResponse } from 'msw'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, onTestFinished } from 'vitest'
-import { AXIOS_INSTANCE } from '@/lib/api-client'
-import { installFakeHttp } from '@/test/http'
+import { describe, expect, it, vi } from 'vitest'
+import { Route, Routes } from 'react-router-dom'
+import { LoginPage } from '@/features/auth/login-page'
+import { server } from '@/test/msw-server'
 import { renderWithProviders } from '@/test/render'
-import { useAuthStore } from '@/state/auth-store'
-import { useDemoAuthStore } from '@/state/demo-auth-store'
-import { LoginPage } from './login-page'
 
-const SESSION = {
-  user: { id: 'u1', displayName: 'Alice', subject: 'alice' },
-  tenantId: 't1',
-  tenantName: 'Acme',
+const fault = { code: 'unauthenticated', params: {}, requestId: 'request-1' }
+const currentUser = {
+  id: '00000000-0000-4000-8000-000000000001',
+  displayName: 'Wang Longan',
+  status: 'active',
+  version: 1,
+  createdAt: '2026-09-21T00:00:00Z',
+  deletedAt: null,
 }
 
-/** Switches the login page into register mode and submits a valid name + email. */
-async function fillRegisterForm(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: '注册' }))
-  await user.type(screen.getByLabelText('姓名'), 'Alice')
-  await user.type(screen.getByLabelText('邮箱'), 'alice@example.com')
-  await user.click(screen.getByRole('button', { name: '注册' }))
+function installCurrentUserFailure(status: number, code: string): () => number {
+  let starts = 0
+  server.use(
+    http.get('/api/v1/me', () => HttpResponse.json({ ...fault, code }, { status })),
+    http.post('/auth/login', () => {
+      starts += 1
+      return HttpResponse.json({ authorizationUrl: 'https://example.com' })
+    }),
+  )
+  return () => starts
 }
 
 describe('LoginPage', () => {
-  beforeEach(() => {
-    useAuthStore.getState().clear()
-    useDemoAuthStore.getState().clear()
-  })
-
-  it('renders the sign-in form with both session tabs', () => {
-    renderWithProviders(<LoginPage />, { route: '/login' })
-    expect(screen.getByRole('heading', { name: '登录 Ora' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '真实账号' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '演示账号' })).toBeInTheDocument()
-    expect(screen.getByLabelText('邮箱')).toBeInTheDocument()
-  })
-
-  it('signs the real account in through the edge server and stores the session', async () => {
-    installFakeHttp(SESSION)
-    const user = userEvent.setup()
-    renderWithProviders(<LoginPage />, { route: '/login' })
-
-    await user.type(screen.getByLabelText('邮箱'), 'alice@example.com')
-    await user.click(screen.getByRole('button', { name: '连接后端登录' }))
-
-    await waitFor(() => {
-      expect(useAuthStore.getState().user?.displayName).toBe('Alice')
-      expect(useAuthStore.getState().tenantId).toBe('t1')
-    })
-  })
-
-  it('shows a failure hint when the edge server is unreachable', async () => {
-    installFakeHttp({ message: 'down' }, 500)
-    const user = userEvent.setup()
-    renderWithProviders(<LoginPage />, { route: '/login' })
-
-    await user.type(screen.getByLabelText('邮箱'), 'alice@example.com')
-    await user.click(screen.getByRole('button', { name: '连接后端登录' }))
-
-    expect(await screen.findByText('登录失败：请确认后端已启动后重试。')).toBeInTheDocument()
-    expect(useAuthStore.getState().tenantId).toBeNull()
-  })
-
-  it('signs a demo account in against the mock store', async () => {
-    const user = userEvent.setup()
-    renderWithProviders(<LoginPage />, { route: '/login' })
-
-    await user.click(screen.getByRole('tab', { name: '演示账号' }))
-    await user.clear(screen.getByLabelText('邮箱'))
-    await user.type(screen.getByLabelText('邮箱'), 'demo@example.com')
-    await user.click(screen.getByRole('button', { name: '继续' }))
-
-    await waitFor(() => {
-      expect(useDemoAuthStore.getState().token).not.toBeNull()
-      expect(useDemoAuthStore.getState().user?.email).toBe('demo@example.com')
-    })
-  })
-
-  it('redirects an already-signed-in real account to the default workspace', () => {
-    useAuthStore.getState().setSession(SESSION)
-    renderWithProviders(<LoginPage />, { route: '/login' })
-    expect(screen.queryByRole('heading', { name: '登录 Ora' })).not.toBeInTheDocument()
-  })
-
-  it('redirects an already-signed-in demo account to its issue board', () => {
-    useDemoAuthStore.getState().setSession('token', {
-      id: 'u1',
-      type: 'user',
-      name: 'Demo',
-      email: 'demo@example.com',
-      avatarColor: '#3b82f6',
-      initials: 'DE',
-      role: 'owner',
-    })
-    renderWithProviders(<LoginPage />, { route: '/login' })
-    expect(screen.queryByRole('heading', { name: '登录 Ora' })).not.toBeInTheDocument()
-  })
-
-  describe('register mode', () => {
-    it('LoginPageSwitchesToRegisterModeAndShowsNameAndEmailFields', async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<LoginPage />, { route: '/login' })
-
-      await user.click(screen.getByRole('button', { name: '注册' }))
-
-      expect(screen.getByLabelText('姓名')).toBeInTheDocument()
-      expect(screen.getByLabelText('邮箱')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: '注册' })).toBeInTheDocument()
-    })
-
-    it('RegisterValidationErrorsVisible', async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<LoginPage />, { route: '/login' })
-
-      await user.click(screen.getByRole('button', { name: '注册' }))
-      await user.click(screen.getByRole('button', { name: '注册' }))
-
-      expect(await screen.findByText('请输入姓名。')).toBeInTheDocument()
-    })
-
-    it('DuplicateEmailShowsUserAlreadyExistsMessage', async () => {
-      installFakeHttp({ code: 'user_already_exists', params: {}, requestId: 'r' }, 409)
-      const user = userEvent.setup()
-      renderWithProviders(<LoginPage />, { route: '/login' })
-
-      await fillRegisterForm(user)
-
-      expect(await screen.findByText('该邮箱已经注册。')).toBeInTheDocument()
-      expect(useAuthStore.getState().tenantId).toBeNull()
-    })
-
-    it('RegisterSuccessStoresSessionAndNavigates', async () => {
-      installFakeHttp(SESSION)
-      const user = userEvent.setup()
-      renderWithProviders(<LoginPage />, { route: '/login' })
-
-      await fillRegisterForm(user)
-
-      await waitFor(() => {
-        expect(useAuthStore.getState().user?.displayName).toBe('Alice')
-        expect(useAuthStore.getState().tenantId).toBe('t1')
-      })
-    })
-
-    it('RegisterSubmitDisabledWhileLoading', async () => {
-      let resolve!: (value: AxiosResponse) => void
-      let requestConfig!: InternalAxiosRequestConfig
-      const adapter: AxiosAdapter = (config) => {
-        requestConfig = config
-        return new Promise<AxiosResponse>((res) => {
-          resolve = res
-        })
-      }
-      const { defaults } = AXIOS_INSTANCE
-      const previous = defaults.adapter
-      defaults.adapter = adapter
-      onTestFinished(() => {
-        if (previous === undefined) {
-          delete defaults.adapter
-        } else {
-          defaults.adapter = previous
+  it('automatically starts IDaaS login and preserves the safe target', async () => {
+    let requestedReturnTo = ''
+    server.use(
+      http.get('/api/v1/me', () => HttpResponse.json(fault, { status: 401 })),
+      http.post('/auth/login', async ({ request }) => {
+        const body: unknown = await request.json()
+        if (typeof body !== 'object' || body === null || !('returnTo' in body)) {
+          return HttpResponse.json({ code: 'invalid_request' }, { status: 400 })
         }
-      })
+        requestedReturnTo = String(body.returnTo)
+        return HttpResponse.json({ authorizationUrl: 'https://uniportal.huawei.com/authorize' })
+      }),
+    )
+    const replaceLocation = vi.fn<(target: string) => void>()
 
-      const user = userEvent.setup()
-      renderWithProviders(<LoginPage />, { route: '/login' })
-
-      await fillRegisterForm(user)
-
-      expect(await screen.findByRole('button', { name: '注册中…' })).toBeDisabled()
-      resolve({
-        data: SESSION,
-        status: 200,
-        statusText: '',
-        headers: {},
-        config: requestConfig,
-      })
-      await waitFor(() => expect(useAuthStore.getState().tenantId).toBe('t1'))
+    renderWithProviders(<LoginPage replaceLocation={replaceLocation} />, {
+      route: '/login?returnTo=%2Fora%2Fissues%3Ftab%3Dmine',
     })
+
+    expect(await screen.findByText('正在跳转华为统一登录…')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(replaceLocation).toHaveBeenCalledWith('https://uniportal.huawei.com/authorize')
+    })
+    expect(requestedReturnTo).toBe('/ora/issues?tab=mine')
+  })
+
+  it('stops after a login-start failure and retries only on user action', async () => {
+    let starts = 0
+    server.use(
+      http.get('/api/v1/me', () => HttpResponse.json(fault, { status: 401 })),
+      http.post('/auth/login', () => {
+        starts += 1
+        return HttpResponse.json({ code: 'login_unavailable' }, { status: 503 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<LoginPage replaceLocation={vi.fn<(target: string) => void>()} />, {
+      route: '/login',
+    })
+
+    const retry = await screen.findByRole('button', { name: '重新登录' })
+    expect(starts).toBe(1)
+    await user.click(retry)
+    await waitFor(() => expect(starts).toBe(2))
+  })
+
+  it('shows a disabled account without starting another login', async () => {
+    const loginStarts = installCurrentUserFailure(403, 'user_disabled')
+
+    renderWithProviders(<LoginPage replaceLocation={vi.fn<(target: string) => void>()} />, {
+      route: '/login',
+    })
+
+    expect(await screen.findByText('账号已被停用')).toBeInTheDocument()
+    expect(loginStarts()).toBe(0)
+  })
+
+  it('returns an already authenticated user to the requested target', async () => {
+    server.use(http.get('/api/v1/me', () => HttpResponse.json(currentUser)))
+
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/login"
+          element={<LoginPage replaceLocation={vi.fn<(target: string) => void>()} />}
+        />
+        <Route path="/ora/issues" element={<div>Target page</div>} />
+      </Routes>,
+      { route: '/login?returnTo=%2Fora%2Fissues' },
+    )
+
+    expect(await screen.findByText('Target page')).toBeInTheDocument()
+  })
+
+  it('does not start login while current-user lookup is unavailable', async () => {
+    const loginStarts = installCurrentUserFailure(503, 'unavailable')
+
+    renderWithProviders(<LoginPage replaceLocation={vi.fn<(target: string) => void>()} />, {
+      route: '/login',
+    })
+
+    expect(await screen.findByRole('button', { name: '重新检查' })).toBeInTheDocument()
+    expect(loginStarts()).toBe(0)
   })
 })

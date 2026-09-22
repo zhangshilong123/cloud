@@ -411,7 +411,6 @@
           },
           "spaceId": {
             "format": "uuid",
-            "nullable": true,
             "type": "string"
           },
           "tenantId": {
@@ -1739,7 +1738,6 @@
           },
           "spaceId": {
             "format": "uuid",
-            "nullable": true,
             "type": "string"
           },
           "tenantId": {
@@ -2615,7 +2613,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -2760,7 +2758,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -2890,7 +2888,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -3025,7 +3023,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -3172,7 +3170,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -3326,7 +3324,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -3504,7 +3502,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -3549,10 +3547,10 @@
         ]
       }
     },
-    "/api/v1/tenants/{tid}/issue-statuses/{sid}": {
+    "/api/v1/tenants/{tid}/issue-statuses/{stid}": {
       "delete": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Requires matching resource version and no active project operation. Atomically closes new execution admission. Active tickets return 409 resource_in_use without changing admission. Unknown Node activity requires later proof and remains pending/blocked. main Workspace cannot be independently deleted. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "delete_api_v1_tenants_tid_issue-statuses_sid",
+        "operationId": "delete_api_v1_tenants_tid_issue-statuses_stid",
         "parameters": [
           {
             "in": "path",
@@ -3565,7 +3563,7 @@
           },
           {
             "in": "path",
-            "name": "sid",
+            "name": "stid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -3664,7 +3662,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -3703,14 +3701,14 @@
             "userCredential": []
           }
         ],
-        "summary": "DELETE /api/v1/tenants/:tid/issue-statuses/:sid",
+        "summary": "DELETE /api/v1/tenants/:tid/issue-statuses/:stid",
         "tags": [
           "tenants"
         ]
       },
       "put": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "put_api_v1_tenants_tid_issue-statuses_sid",
+        "operationId": "put_api_v1_tenants_tid_issue-statuses_stid",
         "parameters": [
           {
             "in": "path",
@@ -3723,7 +3721,7 @@
           },
           {
             "in": "path",
-            "name": "sid",
+            "name": "stid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -3836,7 +3834,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -3875,7 +3873,7 @@
             "userCredential": []
           }
         ],
-        "summary": "PUT /api/v1/tenants/:tid/issue-statuses/:sid",
+        "summary": "PUT /api/v1/tenants/:tid/issue-statuses/:stid",
         "tags": [
           "tenants"
         ]
@@ -3990,7 +3988,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -4150,7 +4148,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -4310,7 +4308,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -4464,7 +4462,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -4599,7 +4597,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -4798,7 +4796,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -4984,7 +4982,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -5144,7 +5142,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -5270,7 +5268,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -5460,7 +5458,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -5623,7 +5621,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -5786,7 +5784,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -5984,7 +5982,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -6153,7 +6151,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -6312,7 +6310,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -6456,7 +6454,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -6635,7 +6633,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -6795,7 +6793,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -6939,7 +6937,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -7122,7 +7120,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -7285,7 +7283,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -7451,7 +7449,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -7611,7 +7609,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -7781,7 +7779,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -7925,7 +7923,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -8104,7 +8102,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -8241,7 +8239,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -8409,7 +8407,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -8570,7 +8568,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -8736,7 +8734,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -8880,7 +8878,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -9034,7 +9032,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -9193,7 +9191,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -9353,7 +9351,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -9506,7 +9504,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -9660,7 +9658,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -9824,7 +9822,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -9959,7 +9957,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -10135,7 +10133,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -10289,7 +10287,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -10464,7 +10462,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -10637,7 +10635,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -10763,7 +10761,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -10914,7 +10912,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -11077,7 +11075,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -11250,7 +11248,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -11404,7 +11402,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -11558,7 +11556,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -11712,7 +11710,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -11757,10 +11755,10 @@
         ]
       }
     },
-    "/api/v1/tenants/{tid}/spaces/{spaceId}": {
+    "/api/v1/tenants/{tid}/spaces/{sid}": {
       "delete": {
-        "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Archives the space (soft delete); requires owner and a matching version. The default space cannot be archived. Projects are unaffected. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "delete_api_v1_tenants_tid_spaces_spaceId",
+        "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Archives the space (soft delete); requires owner and a matching version. Projects are unaffected. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
+        "operationId": "delete_api_v1_tenants_tid_spaces_sid",
         "parameters": [
           {
             "in": "path",
@@ -11773,7 +11771,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11872,7 +11870,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -11911,14 +11909,14 @@
             "userCredential": []
           }
         ],
-        "summary": "DELETE /api/v1/tenants/:tid/spaces/:spaceId",
+        "summary": "DELETE /api/v1/tenants/:tid/spaces/:sid",
         "tags": [
           "spaces"
         ]
       },
       "get": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Only joined members can read a space. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "get_api_v1_tenants_tid_spaces_spaceId",
+        "operationId": "get_api_v1_tenants_tid_spaces_sid",
         "parameters": [
           {
             "in": "path",
@@ -11931,7 +11929,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -11998,7 +11996,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -12037,14 +12035,14 @@
             "userCredential": []
           }
         ],
-        "summary": "GET /api/v1/tenants/:tid/spaces/:spaceId",
+        "summary": "GET /api/v1/tenants/:tid/spaces/:sid",
         "tags": [
           "spaces"
         ]
       },
       "patch": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Only name and description may change; slug is immutable. Requires admin or owner and a matching version. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "patch_api_v1_tenants_tid_spaces_spaceId",
+        "operationId": "patch_api_v1_tenants_tid_spaces_sid",
         "parameters": [
           {
             "in": "path",
@@ -12057,7 +12055,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -12152,7 +12150,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -12191,13 +12189,13 @@
             "userCredential": []
           }
         ],
-        "summary": "PATCH /api/v1/tenants/:tid/spaces/:spaceId",
+        "summary": "PATCH /api/v1/tenants/:tid/spaces/:sid",
         "tags": [
           "spaces"
         ]
       }
     },
-    "/api/v1/tenants/{tid}/spaces/{spaceId}/events": {
+    "/api/v1/tenants/{tid}/spaces/{sid}/events": {
       "get": {
         "description": "Membership is verified before the stream opens. Events are lightweight invalidation notices published after commit; clients refetch authoritative state over REST.",
         "operationId": "getSpaceEvents",
@@ -12213,7 +12211,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -12269,16 +12267,16 @@
             "userCredential": []
           }
         ],
-        "summary": "Stream collaboration space events over server-sent events",
+        "summary": "Stream workspace events over server-sent events",
         "tags": [
           "spaces"
         ]
       }
     },
-    "/api/v1/tenants/{tid}/spaces/{spaceId}/members": {
+    "/api/v1/tenants/{tid}/spaces/{sid}/members": {
       "get": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Lists the space's members; any active member of the space can read the member list. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "get_api_v1_tenants_tid_spaces_spaceId_members",
+        "operationId": "get_api_v1_tenants_tid_spaces_sid_members",
         "parameters": [
           {
             "in": "path",
@@ -12291,7 +12289,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -12393,7 +12391,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -12432,14 +12430,14 @@
             "userCredential": []
           }
         ],
-        "summary": "GET /api/v1/tenants/:tid/spaces/:spaceId/members",
+        "summary": "GET /api/v1/tenants/:tid/spaces/:sid/members",
         "tags": [
           "spaces"
         ]
       },
       "post": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Adds an already-registered user to the space as a plain member by email, resolved in the caller's identity source. Admin or owner only. The target is atomically ensured tenant membership (existing role kept) and thereby gains access to the Projects and Runtime Workspaces shared in that workspace. Unknown or inactive email is 404 user_not_registered; adding an existing member returns the current membership unchanged. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "post_api_v1_tenants_tid_spaces_spaceId_members",
+        "operationId": "post_api_v1_tenants_tid_spaces_sid_members",
         "parameters": [
           {
             "in": "path",
@@ -12452,7 +12450,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -12549,7 +12547,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -12588,16 +12586,16 @@
             "userCredential": []
           }
         ],
-        "summary": "POST /api/v1/tenants/:tid/spaces/:spaceId/members",
+        "summary": "POST /api/v1/tenants/:tid/spaces/:sid/members",
         "tags": [
           "spaces"
         ]
       }
     },
-    "/api/v1/tenants/{tid}/spaces/{spaceId}/members/{uid}": {
+    "/api/v1/tenants/{tid}/spaces/{sid}/members/{uid}": {
       "delete": {
-        "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Removes a member's workspace membership (hard delete); owner only, admins and members cannot remove anyone. The user account, tenant membership and their resources are untouched and remain in the workspace; the removed member's access to the workspace, its projects and runtime workspaces is revoked. An owner row can never be removed, including self-removal (409 cannot_remove_workspace_owner). Requires a matching version and an idempotency key. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "delete_api_v1_tenants_tid_spaces_spaceId_members_uid",
+        "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Removes a member's workspace membership (hard delete); owner only, admins and members cannot remove anyone. The user account, tenant membership and their resources are untouched and remain in the workspace; the removed member's access to the workspace, its projects and runtime workspaces is revoked. The last owner cannot be removed (409 space_last_owner). Requires a matching version and an idempotency key. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
+        "operationId": "delete_api_v1_tenants_tid_spaces_sid_members_uid",
         "parameters": [
           {
             "in": "path",
@@ -12610,7 +12608,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -12718,7 +12716,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -12757,14 +12755,14 @@
             "userCredential": []
           }
         ],
-        "summary": "DELETE /api/v1/tenants/:tid/spaces/:spaceId/members/:uid",
+        "summary": "DELETE /api/v1/tenants/:tid/spaces/:sid/members/:uid",
         "tags": [
           "spaces"
         ]
       },
       "put": {
-        "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Updates a member's role (admin/member) or status. Role management is owner-only — admins add members through POST, they cannot change roles. The owner role is immutable: granting owner or any write touching an owner row is 409 ownership_transfer_not_supported (ownership transfer is not implemented). The target user must be an active member of the same tenant; a matching version is required. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "put_api_v1_tenants_tid_spaces_spaceId_members_uid",
+        "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Updates a member's role (admin/member/owner) or status; admin or owner, and granting owner requires owner. The target user must be an active member of the same tenant; a matching version is required. The last owner cannot be demoted or disabled (409 space_last_owner). Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
+        "operationId": "put_api_v1_tenants_tid_spaces_sid_members_uid",
         "parameters": [
           {
             "in": "path",
@@ -12777,7 +12775,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -12890,7 +12888,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -12929,16 +12927,16 @@
             "userCredential": []
           }
         ],
-        "summary": "PUT /api/v1/tenants/:tid/spaces/:spaceId/members/:uid",
+        "summary": "PUT /api/v1/tenants/:tid/spaces/:sid/members/:uid",
         "tags": [
           "spaces"
         ]
       }
     },
-    "/api/v1/tenants/{tid}/spaces/{spaceId}/projects": {
+    "/api/v1/tenants/{tid}/spaces/{sid}/projects": {
       "get": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Project collection scoped to one collaboration space; membership is required, and project visibility follows workspace membership — any active member of the space can see every active project in it. Deleting a project requires its creator or a space owner/admin. spaceId on a created project is optional, never forced. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "get_api_v1_tenants_tid_spaces_spaceId_projects",
+        "operationId": "get_api_v1_tenants_tid_spaces_sid_projects",
         "parameters": [
           {
             "in": "path",
@@ -12951,7 +12949,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -13053,7 +13051,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -13092,14 +13090,14 @@
             "userCredential": []
           }
         ],
-        "summary": "GET /api/v1/tenants/:tid/spaces/:spaceId/projects",
+        "summary": "GET /api/v1/tenants/:tid/spaces/:sid/projects",
         "tags": [
           "spaces"
         ]
       },
       "post": {
         "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Project collection scoped to one collaboration space; membership is required, and project visibility follows workspace membership — any active member of the space can see every active project in it. Deleting a project requires its creator or a space owner/admin. spaceId on a created project is optional, never forced. Creates Project/storage/main Workspace/operation atomically. repositoryUrl allows HTTPS or SSH with no password/query/fragment. defaultBranch defaults to HEAD; credentialRefId must belong to tenant and owner. Storage/worktree/sandbox initialization is asynchronous. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.",
-        "operationId": "post_api_v1_tenants_tid_spaces_spaceId_projects",
+        "operationId": "post_api_v1_tenants_tid_spaces_sid_projects",
         "parameters": [
           {
             "in": "path",
@@ -13112,7 +13110,7 @@
           },
           {
             "in": "path",
-            "name": "spaceId",
+            "name": "sid",
             "required": true,
             "schema": {
               "format": "uuid",
@@ -13237,7 +13235,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -13276,7 +13274,7 @@
             "userCredential": []
           }
         ],
-        "summary": "POST /api/v1/tenants/:tid/spaces/:spaceId/projects",
+        "summary": "POST /api/v1/tenants/:tid/spaces/:sid/projects",
         "tags": [
           "spaces"
         ]
@@ -13410,7 +13408,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -13536,7 +13534,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -13709,7 +13707,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -13882,7 +13880,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -14055,7 +14053,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -14244,7 +14242,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -14404,7 +14402,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -14524,7 +14522,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -14652,7 +14650,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -14780,7 +14778,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -14930,7 +14928,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -15059,7 +15057,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -15199,7 +15197,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -15338,7 +15336,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -15473,7 +15471,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -15618,7 +15616,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -15788,7 +15786,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -15961,7 +15959,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -16145,7 +16143,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {
@@ -16290,7 +16288,7 @@
                 }
               }
             },
-            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, or space_slug_conflict"
           },
           "428": {
             "content": {

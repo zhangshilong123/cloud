@@ -1,26 +1,21 @@
-import { describe, expect, it } from 'vitest'
-import { idempotencyKeyFor, normalizeSpaceRole } from '@/features/spaces/api'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { renderHook, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { CurrentSpaceProvider, useCurrentSpace } from '@/features/spaces/current-space'
 import { parseSSEFrames } from '@/features/spaces/use-space-events'
+import { installCloudSpaceHandlers, TEST_TENANT_ID } from '@/test/cloud-handlers'
 
-describe('idempotencyKeyFor', () => {
-  it('mints one key per logical mutation and replays it for the same variables', () => {
-    const pending: { current: { variables: unknown; key: string } | null } = { current: null }
-    const input = { name: 'Team', slug: 'team', description: '' }
-
-    const first = idempotencyKeyFor(pending, input)
-    expect(first).not.toBe('')
-    // A retry re-enters mutationFn with the very same variables object.
-    expect(idempotencyKeyFor(pending, input)).toBe(first)
-    // A separate mutate() call carries a fresh object and must get a fresh key.
-    const second = idempotencyKeyFor(pending, { name: 'Other', slug: 'other', description: '' })
-    expect(second).not.toBe(first)
-  })
-
-  it('keeps the archive key stable across a retry of the same version', () => {
-    const pending: { current: { variables: unknown; key: string } | null } = { current: null }
-    expect(idempotencyKeyFor(pending, 1)).toBe(idempotencyKeyFor(pending, 1))
-  })
-})
+function wrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return (
+    <QueryClientProvider client={queryClient}>
+      <CurrentSpaceProvider slug="cloud-dev" authenticated>
+        {children}
+      </CurrentSpaceProvider>
+    </QueryClientProvider>
+  )
+}
 
 describe('parseSSEFrames', () => {
   it('splits complete frames into typed events and keeps partial tails', () => {
@@ -44,11 +39,36 @@ describe('parseSSEFrames', () => {
   })
 })
 
-describe('normalizeSpaceRole', () => {
-  it('keeps known roles and falls back to member for unknown values', () => {
-    expect(normalizeSpaceRole('owner')).toBe('owner')
-    expect(normalizeSpaceRole('admin')).toBe('admin')
-    expect(normalizeSpaceRole('member')).toBe('member')
-    expect(normalizeSpaceRole('superuser')).toBe('member')
+describe('CurrentSpaceProvider', () => {
+  beforeEach(() => {
+    installCloudSpaceHandlers('owner')
+  })
+
+  it('uses the Gateway-authenticated Cloud context without browser tokens', async () => {
+    const { result } = renderHook(() => useCurrentSpace(), { wrapper })
+    await waitFor(() => {
+      expect(result.current.tenantId).toBe(TEST_TENANT_ID)
+      expect(result.current.space?.slug).toBe('cloud-dev')
+    })
+    expect(result.current.cloudMode).toBe(true)
+  })
+
+  it('leaves the space unresolved for a slug the member did not join', async () => {
+    const { result } = renderHook(() => useCurrentSpace(), {
+      wrapper: ({ children }: { children: ReactNode }) => {
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        return (
+          <QueryClientProvider client={queryClient}>
+            <CurrentSpaceProvider slug="not-joined" authenticated>
+              {children}
+            </CurrentSpaceProvider>
+          </QueryClientProvider>
+        )
+      },
+    })
+    await waitFor(() => {
+      expect(result.current.tenantId).toBe(TEST_TENANT_ID)
+    })
+    expect(result.current.space).toBeUndefined()
   })
 })

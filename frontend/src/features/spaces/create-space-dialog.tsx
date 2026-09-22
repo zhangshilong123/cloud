@@ -94,7 +94,7 @@ export function CreateSpaceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>新建空间</DialogTitle>
+          <DialogTitle>新建工作区</DialogTitle>
           <DialogDescription>创建后你自动成为所有者（owner）。</DialogDescription>
         </DialogHeader>
         <CreateSpaceFields

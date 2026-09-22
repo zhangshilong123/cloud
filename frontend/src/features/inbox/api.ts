@@ -2,13 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { mockApi } from '@/lib/mock-api-client'
 import type { InboxItem } from '@/mocks/data/types'
 
-export function useInboxItems(slug: string) {
+export function useInboxItems(slug: string, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['inbox', slug],
     queryFn: async () => {
       const { data } = await mockApi.get<InboxItem[]>(`/workspaces/${slug}/inbox`)
       return data
     },
+    enabled,
   })
 }
 
