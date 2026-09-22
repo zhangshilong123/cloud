@@ -4,6 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
+// The dev proxy targets the Gateway by default (upstream flow). A demo backend
+// (cmd/demo-issue-board-web on :8899) can take its place via VITE_PROXY_TARGET.
+const gatewayTarget = process.env['VITE_PROXY_TARGET'] ?? 'http://localhost:8081'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -14,9 +18,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/auth': 'http://localhost:8081',
-      '/api': 'http://localhost:8081',
-      '/healthz': 'http://localhost:8081',
+      '/auth': gatewayTarget,
+      '/api': gatewayTarget,
+      '/healthz': gatewayTarget,
     },
   },
   test: {

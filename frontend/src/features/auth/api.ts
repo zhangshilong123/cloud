@@ -2,6 +2,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { getGetApiV1MeQueryKey, useGetApiV1Me } from '@/api/me/me'
 import { AXIOS_INSTANCE } from '@/lib/api-client'
+import { mockApi } from '@/lib/mock-api-client'
+import type { User } from '@/mocks/data/types'
+import { demoAuthStore } from '@/state/demo-auth-store'
 
 interface LoginStart {
   authorizationUrl: string
@@ -55,5 +58,20 @@ export function useLogout() {
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: getGetApiV1MeQueryKey() })
     },
+  })
+}
+
+/**
+ * Demo-plane sign-in against the MSW-mocked store (`/mock-api/auth/login`);
+ * any email works. The token lives only in the demo session and never touches
+ * the real backend.
+ */
+export function useDemoLogin() {
+  return useMutation({
+    mutationFn: async (email: string) => {
+      const { data } = await mockApi.post<{ token: string; user: User }>('/auth/login', { email })
+      return data
+    },
+    onSuccess: ({ token, user }) => demoAuthStore.setSession(token, user),
   })
 }

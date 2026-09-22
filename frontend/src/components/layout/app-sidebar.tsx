@@ -41,12 +41,14 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import type { SpaceListItem } from '@/api/generated.schemas'
+import type { Workspace } from '@/mocks/data/types'
 import { useLogout } from '@/features/auth/api'
 import { useInboxItems } from '@/features/inbox/api'
 import { CreateSpaceDialog } from '@/features/spaces/create-space-dialog'
 import { useCurrentSpace } from '@/features/spaces/current-space'
 import { workspacePaths } from '@/lib/paths'
 import { db, workspaceBySlug } from '@/mocks/data/store'
+import { demoAuthStore, useDemoAuthStore } from '@/state/demo-auth-store'
 
 const workNav = [
   { to: (p: ReturnType<typeof workspacePaths>) => p.issues, label: '任务', icon: Layers },
@@ -70,13 +72,89 @@ function switchableSpaces(cloudMode: boolean, spaces: SpaceListItem[] | undefine
   return db.workspaces
 }
 
+/**
+ * The account/workspace dropdown: identity (cloud or demo), workspace
+ * switcher, and logout. Demo sessions clear the local store instead of
+ * revoking a server session.
+ */
+function SidebarUserMenu({
+  displayName,
+  cloudMode,
+  slug,
+  switchable,
+  logoutPending,
+  logoutError,
+  onSelectWorkspace,
+  onCreateSpace,
+  onLogout,
+}: {
+  displayName: string | undefined
+  cloudMode: boolean
+  slug: string
+  switchable: Array<SpaceListItem | Workspace>
+  logoutPending: boolean
+  logoutError: boolean
+  onSelectWorkspace: (slug: string) => void
+  onCreateSpace: () => void
+  onLogout: () => void
+}) {
+  return (
+    <DropdownMenuContent className="w-56" align="start" side="bottom" sideOffset={4}>
+      <div className="flex items-center gap-2.5 px-2 py-1.5">
+        <Avatar className="size-10 text-sm">
+          <AvatarFallback className="bg-primary font-medium text-primary-foreground">
+            {(displayName || '').charAt(0).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium leading-tight">{displayName}</p>
+          <p className="truncate text-xs text-muted-foreground leading-tight">
+            {cloudMode ? '已通过统一身份认证' : '演示账号（本地模拟数据）'}
+          </p>
+        </div>
+      </div>
+      <DropdownMenuSeparator />
+      <DropdownMenuGroup>
+        <DropdownMenuLabel className="text-xs text-muted-foreground">工作区</DropdownMenuLabel>
+        {switchable.map((ws) => (
+          <DropdownMenuItem key={ws.id} onClick={() => onSelectWorkspace(ws.slug)}>
+            <span
+              className="flex size-5 items-center justify-center rounded-sm text-[10px] font-semibold text-white"
+              style={{
+                backgroundColor: 'avatarColor' in ws ? ws.avatarColor : '#3b82f6',
+              }}
+            >
+              {ws.name.charAt(0)}
+            </span>
+            <span className="flex-1 truncate">{ws.name}</span>
+            {ws.slug === slug && <Check className="size-3.5" />}
+          </DropdownMenuItem>
+        ))}
+        {cloudMode && (
+          <DropdownMenuItem onClick={onCreateSpace}>
+            <Plus className="size-3.5" />
+            新建工作区
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuGroup>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem variant="destructive" disabled={logoutPending} onClick={onLogout}>
+        <LogOut className="size-3.5" />
+        {logoutPending ? '正在退出…' : '退出登录'}
+      </DropdownMenuItem>
+      {logoutError && <p className="px-2 py-1 text-xs text-destructive">退出失败，请重试</p>}
+    </DropdownMenuContent>
+  )
+}
+
 // oxlint-disable-next-line max-lines-per-function -- this composition root owns the complete sidebar navigation tree.
-export function AppSidebar({ slug, user }: { slug: string; user: User }) {
+export function AppSidebar({ slug, user }: { slug: string; user: User | undefined }) {
   const p = workspacePaths(slug)
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const logout = useLogout()
   const { cloudMode, spaces, tenantId, space } = useCurrentSpace()
+  const demoUser = useDemoAuthStore((s) => s.user)
   const { data: inboxItems = [] } = useInboxItems(slug)
   const unreadCount = inboxItems.filter((i) => !i.read).length
   const activeWorkspace = space ?? workspaceBySlug(slug) ?? db.workspace
@@ -84,9 +162,15 @@ export function AppSidebar({ slug, user }: { slug: string; user: User }) {
   // sessions between the demo store workspaces.
   const switchable = switchableSpaces(cloudMode, spaces)
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false)
+  const displayName = cloudMode ? (user?.displayName ?? user?.id) : (demoUser?.name ?? demoUser?.id)
 
   function handleLogout() {
-    logout.mutate(undefined, { onSuccess: () => void navigate('/login') })
+    if (cloudMode) {
+      logout.mutate(undefined, { onSuccess: () => void navigate('/login') })
+    } else {
+      demoAuthStore.clear()
+      void navigate('/login')
+    }
   }
 
   return (
@@ -120,68 +204,21 @@ export function AppSidebar({ slug, user }: { slug: string; user: User }) {
                   </SidebarMenuButton>
                 }
               />
-              <DropdownMenuContent className="w-56" align="start" side="bottom" sideOffset={4}>
-                <div className="flex items-center gap-2.5 px-2 py-1.5">
-                  <Avatar className="size-10 text-sm">
-                    <AvatarFallback className="bg-primary font-medium text-primary-foreground">
-                      {(user.displayName || user.id).charAt(0).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium leading-tight">
-                      {user.displayName || user.id}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground leading-tight">
-                      已通过统一身份认证
-                    </p>
-                  </div>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="text-xs text-muted-foreground">
-                    工作区
-                  </DropdownMenuLabel>
-                  {switchable.map((ws) => (
-                    <DropdownMenuItem
-                      key={ws.id}
-                      onClick={() => {
-                        // Cloud spaces have no mock issue boards; land on projects.
-                        const target = cloudMode ? 'projects' : 'issues'
-                        if (ws.slug !== slug) void navigate(`/${ws.slug}/${target}`)
-                      }}
-                    >
-                      <span
-                        className="flex size-5 items-center justify-center rounded-sm text-[10px] font-semibold text-white"
-                        style={{
-                          backgroundColor: 'avatarColor' in ws ? ws.avatarColor : '#3b82f6',
-                        }}
-                      >
-                        {ws.name.charAt(0)}
-                      </span>
-                      <span className="flex-1 truncate">{ws.name}</span>
-                      {ws.slug === slug && <Check className="size-3.5" />}
-                    </DropdownMenuItem>
-                  ))}
-                  {cloudMode && (
-                    <DropdownMenuItem onClick={() => setCreateSpaceOpen(true)}>
-                      <Plus className="size-3.5" />
-                      新建工作区
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={logout.isPending}
-                  onClick={handleLogout}
-                >
-                  <LogOut className="size-3.5" />
-                  {logout.isPending ? '正在退出…' : '退出登录'}
-                </DropdownMenuItem>
-                {logout.isError && (
-                  <p className="px-2 py-1 text-xs text-destructive">退出失败，请重试</p>
-                )}
-              </DropdownMenuContent>
+              <SidebarUserMenu
+                displayName={displayName}
+                cloudMode={cloudMode}
+                slug={slug}
+                switchable={switchable}
+                logoutPending={logout.isPending}
+                logoutError={logout.isError}
+                onSelectWorkspace={(targetSlug) => {
+                  // Cloud spaces have no mock issue boards; land on projects.
+                  const target = cloudMode ? 'projects' : 'issues'
+                  if (targetSlug !== slug) void navigate(`/${targetSlug}/${target}`)
+                }}
+                onCreateSpace={() => setCreateSpaceOpen(true)}
+                onLogout={handleLogout}
+              />
             </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>

@@ -7,13 +7,35 @@ import { classifyAuthenticationFailure, useCurrentUser, useLogout } from '@/feat
 import { loginPath } from '@/features/auth/return-to'
 import { CurrentSpaceProvider, useCurrentSpace } from '@/features/spaces/current-space'
 import { useSpaceEvents } from '@/features/spaces/use-space-events'
+import { useDemoAuthStore } from '@/state/demo-auth-store'
 
 /**
- * Authenticated application shell. The Gateway's HttpOnly cookie is verified
- * through `/api/v1/me` before any workspace content is rendered.
+ * Authenticated application shell. A demo session (MSW mock store) renders
+ * without touching `/api/v1/me`; a cloud session is verified against the
+ * Gateway through `/api/v1/me` before any workspace content is rendered.
  */
 export function DashboardLayout() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>()
+  const demoToken = useDemoAuthStore((s) => s.token)
+  if (demoToken) return <DemoDashboard slug={workspaceSlug ?? ''} />
+  return <CloudDashboard slug={workspaceSlug ?? ''} />
+}
+
+/**
+ * Demo-plane shell: resolves the slug against the mock store, never calls the
+ * real backend, and keeps `cloudMode` false so the mock-only surfaces (AI 团队
+ * and friends) are reachable.
+ */
+function DemoDashboard({ slug }: { slug: string }) {
+  return (
+    <CurrentSpaceProvider slug={slug}>
+      <DashboardShell slug={slug} user={undefined} />
+    </CurrentSpaceProvider>
+  )
+}
+
+/** Cloud-plane shell: Gateway cookie verified through `/api/v1/me`. */
+function CloudDashboard({ slug }: { slug: string }) {
   const location = useLocation()
   const currentUser = useCurrentUser()
 
@@ -39,13 +61,13 @@ export function DashboardLayout() {
   }
 
   return (
-    <CurrentSpaceProvider slug={workspaceSlug ?? ''} authenticated>
-      <DashboardShell slug={workspaceSlug ?? ''} user={currentUser.data} />
+    <CurrentSpaceProvider slug={slug} authenticated>
+      <DashboardShell slug={slug} user={currentUser.data} />
     </CurrentSpaceProvider>
   )
 }
 
-function DashboardShell({ slug, user }: { slug: string; user: User }) {
+function DashboardShell({ slug, user }: { slug: string; user: User | undefined }) {
   const { tenantId, space, spaces } = useCurrentSpace()
   useSpaceEvents(tenantId, space?.id)
   if (spaces && spaces.length === 0) {

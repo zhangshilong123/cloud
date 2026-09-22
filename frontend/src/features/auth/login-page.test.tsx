@@ -1,9 +1,11 @@
 import { http, HttpResponse } from 'msw'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router-dom'
 import { LoginPage } from '@/features/auth/login-page'
+import { db } from '@/mocks/data/store'
+import { demoAuthStore } from '@/state/demo-auth-store'
 import { server } from '@/test/msw-server'
 import { renderWithProviders } from '@/test/render'
 
@@ -30,6 +32,10 @@ function installCurrentUserFailure(status: number, code: string): () => number {
 }
 
 describe('LoginPage', () => {
+  // The demo session is module-level and persisted to localStorage; clear it so
+  // no test leaks a demo token into a sibling cloud-mode test.
+  afterEach(() => demoAuthStore.clear())
+
   it('automatically starts IDaaS login and preserves the safe target', async () => {
     let requestedReturnTo = ''
     server.use(
@@ -113,5 +119,29 @@ describe('LoginPage', () => {
 
     expect(await screen.findByRole('button', { name: '重新检查' })).toBeInTheDocument()
     expect(loginStarts()).toBe(0)
+  })
+
+  it('signs into the demo plane with any email and lands on the mock board', async () => {
+    const user = userEvent.setup()
+    // The demo tab never reads /api/v1/me; installing the same failure used by
+    // the cloud tests keeps the request handled and the demo path independent.
+    server.use(http.get('/api/v1/me', () => HttpResponse.json(fault, { status: 401 })))
+
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/login"
+          element={<LoginPage replaceLocation={vi.fn<(target: string) => void>()} />}
+        />
+        <Route path={`/${db.workspace.slug}/issues`} element={<div>Demo board</div>} />
+      </Routes>,
+      { route: '/login' },
+    )
+
+    await user.click(await screen.findByRole('tab', { name: '演示账号' }))
+    await user.type(screen.getByLabelText('邮箱'), 'anyone@example.com')
+    await user.click(screen.getByRole('button', { name: '进入演示' }))
+
+    expect(await screen.findByText('Demo board')).toBeInTheDocument()
   })
 })

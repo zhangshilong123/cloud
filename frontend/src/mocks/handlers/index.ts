@@ -1,4 +1,5 @@
 import { agentHandlers } from './agents'
+import { authHandlers } from './auth'
 import { billingHandlers } from './billing'
 import { chatHandlers } from './chat'
 import { inboxHandlers } from './inbox'
@@ -11,6 +12,7 @@ import { workspaceHandlers } from './workspaces'
 
 export const handlers = [
   ...workspaceHandlers,
+  ...authHandlers,
   ...issueHandlers,
   ...projectHandlers,
   ...squadHandlers,

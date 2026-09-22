@@ -13,7 +13,7 @@ React 19 + TypeScript + Vite 8 + Tailwind CSS 4 (shadcn/ui components). The API 
 | `src/api/index.ts` | **Generated.** Re-exports every tag directory |
 | `src/lib/api-client.ts` | The axios instance (`AXIOS_INSTANCE`) and mutator shared by every generated hook; the browser carries only its HttpOnly session cookie and stores or injects no token |
 | `orval.config.ts` | Generator config: input `../api/openapi.json`, `client: 'react-query'`, `clean: true` |
-| `vite.config.ts` | `@` → `src` alias; dev proxy for `/auth`, `/api`, and `/healthz` to Gateway `http://localhost:8081`; vitest and coverage thresholds |
+| `vite.config.ts` | `@` → `src` alias; dev proxy for `/auth`, `/api`, and `/healthz` to the Gateway (default `http://localhost:8081`, overridable via `VITE_PROXY_TARGET` to a demo bridge); vitest and coverage thresholds |
 | `scripts/` | Gate scripts that enforce module READMEs, tests and documented exports; see [`scripts/README.en.md`](scripts/README.en.md) |
 | `AGENTS.md` | Engineering rules for this directory (cohesion, size limits, docs, tests); `CLAUDE.md` imports it |
 
@@ -59,3 +59,48 @@ Task wrappers at the repository root:
 ## Local end-to-end
 
 The backend needs a real PostgreSQL database and registered Gateway keys. Follow the root [README](../README.en.md) to start and migrate the database and configure `configs/gateway.yaml`. After `task dev`, open only `http://localhost:5173`; that origin proxies login and API requests, so `public.base_url` must name the same browser-visible origin. Production must likewise expose the frontend and Gateway as one public origin.
+
+## Demo mode (run right after cloning)
+
+The login page offers a "real account / demo account" split; after cloning you can demo every mock page
+without any backend, and the real-backend features (the Issue board and the `@workflow` mention inside
+issue cards) through the demo bridge.
+
+### Demo plane (frontend only, no backend)
+
+`npm run dev` → open `http://localhost:5173/login` → pick "演示账号" (demo account) on the login page →
+any email works. (Without a backend, opening `/` stops at "暂时无法验证登录状态", which is expected —
+go straight to `/login`.) All pages are served from `src/mocks/` (MSW under the `/mock-api` namespace)
+with local seeded data and never touch `/auth/*`, `/api/v1/me`, or the database:
+
+- Agents, squads, skills, runtimes (the "AI team" surfaces)
+- Chat, inbox, my issues
+- Issues (the Issue board with mock data)
+
+The demo session (`src/state/demo-auth-store.ts`) lives only in localStorage, survives a refresh, and is
+cleared on logout.
+
+### Cloud plane (real backend: Issue board and @workflow)
+
+`@workflow` needs the real backend: Docker PostgreSQL plus the demo bridge
+(`cmd/demo-issue-board-web`, :8899). The bridge injects the dual JWTs server-side on every request (the
+browser stays untrusted), so opening the app auto-authenticates as the seeded user — no manual login:
+
+```sh
+# 1. Start and migrate the database (see the root README "Local verification")
+docker compose up -d --wait
+go run ./cmd/cloudctl -command migrate
+
+# 2. Start the demo bridge (isolated demo schema, dropped on exit)
+go run ./cmd/demo-issue-board-web
+
+# 3. Point Vite at the bridge (the default targets the Gateway :8081)
+VITE_PROXY_TARGET=http://localhost:8899 npm run dev
+```
+
+Open `http://localhost:5173/` → the real-account plane verifies `/api/v1/me` as the seeded user
+(alice) and lands in the real workspace (Default) → the Issue board, creating/editing issues, and
+mentioning `@workflow` inside an issue card (`/collaboration/*`, issue runs, timeline) all hit the real
+PostgreSQL data. Do NOT pick "演示账号" here — that is the pure-frontend mock plane with no real
+issues or @workflow data. The real IDaaS/GitHub account plane is not runnable locally; it needs a
+deployed Gateway as described under "Local end-to-end".
