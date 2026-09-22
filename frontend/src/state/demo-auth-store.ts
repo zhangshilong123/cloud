@@ -12,6 +12,9 @@ import type { User } from '@/mocks/data/types'
 export interface DemoSession {
   token: string | null
   user: User | null
+  /** True right after the user signs out, so the login page stops trusting an
+   * auto-authenticated (`/api/v1/me`) session and shows the sign-in UI. */
+  loggedOut: boolean
 }
 
 const STORAGE_KEY = 'ora-mock-auth'
@@ -20,17 +23,18 @@ const STORAGE_KEY = 'ora-mock-auth'
 function readStored(): DemoSession {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { token: null, user: null }
+    if (!raw) return { token: null, user: null, loggedOut: false }
     const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null) return { token: null, user: null }
+    if (typeof parsed !== 'object' || parsed === null)
+      return { token: null, user: null, loggedOut: false }
     const candidate = parsed as { token?: unknown; user?: unknown }
     if (typeof candidate.token === 'string' && isUser(candidate.user)) {
-      return { token: candidate.token, user: candidate.user }
+      return { token: candidate.token, user: candidate.user, loggedOut: false }
     }
   } catch {
     // corrupted or unavailable storage: the session simply does not persist
   }
-  return { token: null, user: null }
+  return { token: null, user: null, loggedOut: false }
 }
 
 function isUser(value: unknown): value is User {
@@ -49,7 +53,7 @@ function emit(): void {
 }
 
 function setSession(token: string, user: User): void {
-  session = { token, user }
+  session = { token, user, loggedOut: false }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session))
   } catch {
@@ -59,7 +63,19 @@ function setSession(token: string, user: User): void {
 }
 
 function clear(): void {
-  session = { token: null, user: null }
+  session = { token: null, user: null, loggedOut: false }
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // ignore
+  }
+  emit()
+}
+
+/** Signs out without assuming the server accepted it (the demo bridge has no
+ * `/auth/logout` route), so the login page re-renders into the sign-in UI. */
+function markLoggedOut(): void {
+  session = { token: null, user: null, loggedOut: true }
   try {
     localStorage.removeItem(STORAGE_KEY)
   } catch {
@@ -85,4 +101,4 @@ export function useDemoAuthStore<T>(selector: (s: DemoSession) => T): T {
 }
 
 /** Imperative demo-session actions for event handlers outside React. */
-export const demoAuthStore = { setSession, clear }
+export const demoAuthStore = { setSession, clear, markLoggedOut }

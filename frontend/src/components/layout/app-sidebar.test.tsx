@@ -107,4 +107,25 @@ describe('AppSidebar workspace switcher', () => {
     expect(await screen.findByText('Login screen')).toBeInTheDocument()
     expect(logoutCalls).toBe(1)
   })
+
+  it('still returns to login when the Gateway revoke route is unavailable', async () => {
+    // The demo bridge has no /auth/logout route (Gateway-only), so logout must
+    // not depend on the revoke call succeeding.
+    let logoutCalls = 0
+    server.use(
+      http.post('/auth/logout', () => {
+        logoutCalls += 1
+        return HttpResponse.json({ code: 'not_found' }, { status: 404 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderDashboard('/cloud-dev/issues')
+    await screen.findByText('Issues screen')
+
+    await user.click(await screen.findByRole('button', { name: /Cloud Dev/ }))
+    await user.click(await screen.findByRole('menuitem', { name: '退出登录' }))
+
+    expect(await screen.findByText('Login screen')).toBeInTheDocument()
+    expect(logoutCalls).toBe(1)
+  })
 })

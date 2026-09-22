@@ -35,6 +35,7 @@ export function LoginPage({ replaceLocation = replaceBrowserLocation }: LoginPag
   const returnTo = safeReturnTo(search.get('returnTo'))
   const [tab, setTab] = useState<'cloud' | 'demo'>('cloud')
   const demoToken = useDemoAuthStore((s) => s.token)
+  const loggedOut = useDemoAuthStore((s) => s.loggedOut)
   const currentUser = useCurrentUser()
   const login = useStartLogin()
   const attempted = useRef(false)
@@ -54,7 +55,10 @@ export function LoginPage({ replaceLocation = replaceBrowserLocation }: LoginPag
   }, [tab, beginLogin, failure])
 
   if (demoToken) return <Navigate to={`/${db.workspace.slug}/issues`} replace />
-  if (currentUser.isSuccess) return <Navigate to={returnTo} replace />
+  // After an explicit sign-out the session is not trusted anymore, even when
+  // the bridge keeps answering /api/v1/me (demo bridge has no /auth/logout);
+  // stay on the sign-in screen instead of bouncing straight back in.
+  if (currentUser.isSuccess && !loggedOut) return <Navigate to={returnTo} replace />
 
   return (
     <div className="flex min-h-svh items-center justify-center bg-muted/30 px-4">
@@ -75,6 +79,7 @@ export function LoginPage({ replaceLocation = replaceBrowserLocation }: LoginPag
           </TabsList>
           <TabsContent value="cloud">
             <CloudAuthPanel
+              loggedOut={loggedOut}
               failure={failure}
               login={login}
               onRetryCurrentUser={() => void currentUser.refetch()}
@@ -98,11 +103,13 @@ export function LoginPage({ replaceLocation = replaceBrowserLocation }: LoginPag
  * unauthenticated, surfaces disabled/unavailable states, and offers retries.
  */
 function CloudAuthPanel({
+  loggedOut,
   failure,
   login,
   onRetryCurrentUser,
   onRetryLogin,
 }: {
+  loggedOut: boolean
   failure: ReturnType<typeof classifyAuthenticationFailure> | undefined
   login: ReturnType<typeof useStartLogin>
   onRetryCurrentUser: () => void
@@ -112,7 +119,12 @@ function CloudAuthPanel({
   let description = '请稍候。'
   let action: React.ReactNode
 
-  if (failure === 'forbidden') {
+  if (loggedOut) {
+    // The demo bridge has no /auth/logout route, so /api/v1/me still answers a
+    // user after sign-out; surface the sign-out instead of re-authenticating.
+    title = '已退出登录'
+    description = '如需重新登录，请切换至「演示账号」或刷新页面。'
+  } else if (failure === 'forbidden') {
     title = '账号已被停用'
     description = 'Cloud 已拒绝当前账号，请联系管理员恢复访问。'
   } else if (failure === 'unavailable') {

@@ -93,7 +93,9 @@ function EmptyWorkspaceState() {
   const logout = useLogout()
 
   function handleLogout() {
-    logout.mutate(undefined, { onSuccess: () => void navigate('/login') })
+    // The demo bridge has no /auth/logout route (it is Gateway-only), so the
+    // revoke call may 404; still return to the login screen in that case.
+    logout.mutate(undefined, { onSettled: () => void navigate('/login') })
   }
 
   return (

@@ -165,10 +165,14 @@ export function AppSidebar({ slug, user }: { slug: string; user: User | undefine
   const displayName = cloudMode ? (user?.displayName ?? user?.id) : (demoUser?.name ?? demoUser?.id)
 
   function handleLogout() {
+    // markLoggedOut clears the demo session and flags the sign-out so the login
+    // page stays on the sign-in screen even when the bridge still answers
+    // /api/v1/me (the demo bridge has no /auth/logout route).
+    demoAuthStore.markLoggedOut()
     if (cloudMode) {
-      logout.mutate(undefined, { onSuccess: () => void navigate('/login') })
+      // The revoke call may 404 (Gateway-only route); still return to login.
+      logout.mutate(undefined, { onSettled: () => void navigate('/login') })
     } else {
-      demoAuthStore.clear()
       void navigate('/login')
     }
   }
