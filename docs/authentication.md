@@ -54,3 +54,9 @@ Node 服务凭据的 `sub` 是每次进程启动新建的 Node UUID，并增加 
 外部 provider token 不进入内部 JWT；user JWT 只携带稳定 subject、固定 source 和首次 JIT 所需的显示名。Cloud session 默认在 IDaaS 部署中 12 小时绝对过期，退出或管理员吊销可立即失效；W3 员工状态不会主动推送到已建立的 session。
 
 首次登录、GitHub PKCE 绑定、回调重放/并发、伪造/过期/错 aud、错服务角色、caller 不匹配、命名空间分离、用户停用均有真实 HTTP+PG 回归测试。模拟器的临时私钥仅供本地演示和测试，不作为部署密钥。
+
+## 本地开发临时邮箱认证（DEV ONLY）
+
+本地演示桥 `cmd/demo-issue-board-web`（非生产网关）挂载 `internal/gateway/devemail` 临时邮箱认证适配器，使浏览器能在本机做多用户联调：`POST /auth/dev/register`、`POST /auth/dev/login`、`POST /auth/logout`。注册走核心 `identity()` 的 JIT 路径自建账号 —— 邮箱经 `normalizeEmail` 归一化小写（`Alice@Example.com` 与 `alice@example.com` 是同一账号），重复注册返回 409 `email_already_registered`；账号随即加入演示租户成员，但**不会**自动创建 Workspace（0 Workspace 是合法状态）。登录未知邮箱返回 401 `email_not_registered`，绝不自动创建账号；注册/登录成功后设置 `ora_dev_session`（HttpOnly、仅 loopback）会话 cookie，桥在转发请求前把会话解析为 `source=dev-email` 的用户身份，再按与 `cmd/gateway` 相同的方式签发 service/user 双 JWT。
+
+该适配器**不是**第二套生产认证架构：不存储密码、不实现 OAuth/JWT 平台、不回收凭据、不合并账号；生产入口始终是 `cmd/gateway`（IDaaS 或 GitHub）。`DEMO_DEV_AUTH=0` 时注册/登录返回 404 `dev_auth_disabled`，关闭后没有任何自动回退到 IDaaS 或其他登录方式。

@@ -83,6 +83,10 @@ IDaaS 应用登记与上线检查：
 
 生产部署应为 Gateway 配置只拥有 `gateway_login_attempts`、`gateway_sessions` 上 `SELECT/INSERT/UPDATE/DELETE` 以及 `schema_migrations` 上 `SELECT` 的角色。Gateway 启动只调用 `CheckSchema` 校验 migration 校验和，绝不执行 DDL；migration 仍由 `cloudctl migrate` 应用。
 
+## 本地演示桥（非生产网关）
+
+`cmd/demo-issue-board-web` 是为 issue 看板本地演示建立的单进程桥，**不是**生产网关：它内嵌签名私钥，把 `/auth/dev/register`、`/auth/dev/login`、`/auth/logout` 挂到临时开发邮箱认证适配器 `internal/gateway/devemail`（DEV ONLY，见 `docs/authentication.md`），并把 `/api/v1/*` 反向代理到同一进程内的 Cloud 路由，代理时按适配器会话（或回退演示用户）签发 service/user 双 JWT。它还会临时挂载协作 fixture（agent/team/workflow 目录、表单描述符、确定性上下文、mock 执行），恢复 issue @ 选择器与工作流表单的可用性。生产浏览器会话、外部登录、Cookie 语义与凭据签发全部由本文件的 `cmd/gateway` 承担，演示桥不参与。
+
 ## 本地运行
 
 ```bash

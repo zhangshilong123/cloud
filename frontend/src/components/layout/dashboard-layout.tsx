@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 import type { User } from '@/api/generated.schemas'
 import { AppSidebar } from '@/components/layout/app-sidebar'
@@ -5,9 +6,10 @@ import { Button } from '@/components/ui/button'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { classifyAuthenticationFailure, useCurrentUser, useLogout } from '@/features/auth/api'
 import { loginPath } from '@/features/auth/return-to'
+import { CreateSpaceDialog } from '@/features/spaces/create-space-dialog'
 import { CurrentSpaceProvider, useCurrentSpace } from '@/features/spaces/current-space'
 import { useSpaceEvents } from '@/features/spaces/use-space-events'
-import { useDemoAuthStore } from '@/state/demo-auth-store'
+import { demoAuthStore, useDemoAuthStore } from '@/state/demo-auth-store'
 
 /**
  * Authenticated application shell. A demo session (MSW mock store) renders
@@ -87,24 +89,45 @@ function DashboardShell({ slug, user }: { slug: string; user: User | undefined }
   )
 }
 
-/** An authenticated user with no joined space: nothing to leak or mock. */
+/**
+ * An authenticated user with no joined space. 0 Workspace is a legal state
+ * (registration never auto-joins a space): offer creating one, or leaving.
+ */
 function EmptyWorkspaceState() {
   const navigate = useNavigate()
   const logout = useLogout()
+  const { tenantId } = useCurrentSpace()
+  const [createOpen, setCreateOpen] = useState(false)
 
   function handleLogout() {
-    // The demo bridge has no /auth/logout route (it is Gateway-only), so the
-    // revoke call may 404; still return to the login screen in that case.
+    // Flag the sign-out first so the login page stays on the sign-in screen even
+    // when the bridge keeps answering /api/v1/me with the fallback identity.
+    demoAuthStore.markLoggedOut()
+    // The revoke call may 404 (Gateway-only route); still return to login.
     logout.mutate(undefined, { onSettled: () => void navigate('/login') })
   }
 
   return (
     <div className="flex h-svh items-center justify-center bg-muted/30">
-      <div className="space-y-3 text-center">
-        <p className="text-sm text-muted-foreground">你尚未加入任何工作区，请联系管理员添加</p>
-        <Button variant="outline" disabled={logout.isPending} onClick={handleLogout}>
-          {logout.isPending ? '正在退出…' : '退出登录'}
-        </Button>
+      <div className="space-y-4 text-center">
+        <div className="space-y-1">
+          <p className="text-sm font-medium">你还没有加入任何工作区</p>
+          <p className="text-sm text-muted-foreground">
+            创建工作区，或请工作区所有者通过邮箱把你添加进来。
+          </p>
+        </div>
+        <div className="flex justify-center gap-2">
+          <Button onClick={() => setCreateOpen(true)}>创建工作区</Button>
+          <Button variant="outline" disabled={logout.isPending} onClick={handleLogout}>
+            {logout.isPending ? '正在退出…' : '退出登录'}
+          </Button>
+        </div>
+        <CreateSpaceDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          tenantId={tenantId}
+          onCreated={(slug) => navigate(`/${slug}/projects`)}
+        />
       </div>
     </div>
   )

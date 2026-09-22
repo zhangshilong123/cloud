@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import { getGetApiV1MeQueryKey, useGetApiV1Me } from '@/api/me/me'
 import { AXIOS_INSTANCE } from '@/lib/api-client'
@@ -73,5 +73,48 @@ export function useDemoLogin() {
       return data
     },
     onSuccess: ({ token, user }) => demoAuthStore.setSession(token, user),
+  })
+}
+
+/** Clears the local sign-out flag and re-reads the authoritative current user,
+ * used by both dev register and dev login: once the bridge session cookie is
+ * set, `/api/v1/me` resolves the account and the login screen redirects in. */
+function refetchCurrentUser(queryClient: QueryClient) {
+  demoAuthStore.clear()
+  queryClient.invalidateQueries({ queryKey: getGetApiV1MeQueryKey() })
+}
+
+/**
+ * Registers a dev email account through the Temporary Development Email Auth
+ * adapter (`/auth/dev/register`). DEV ONLY — production registration happens in
+ * the IDaaS gateway. The server normalizes the email and joins the account to
+ * the dev tenant; it never auto-creates a Workspace.
+ */
+export function useDevRegister() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: { name: string; email: string }) => {
+      const { data } = await AXIOS_INSTANCE.post<{ user: { id: string } }>(
+        '/auth/dev/register',
+        input,
+      )
+      return data
+    },
+    onSuccess: () => refetchCurrentUser(queryClient),
+  })
+}
+
+/**
+ * Logs into an existing dev email account (`/auth/dev/login`). Unknown
+ * addresses are rejected by the server (401, never auto-created). DEV ONLY.
+ */
+export function useDevLogin() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (email: string) => {
+      const { data } = await AXIOS_INSTANCE.post<{ session: boolean }>('/auth/dev/login', { email })
+      return data
+    },
+    onSuccess: () => refetchCurrentUser(queryClient),
   })
 }

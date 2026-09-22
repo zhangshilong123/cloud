@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
+import { isAxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,6 +9,8 @@ import {
   classifyAuthenticationFailure,
   useCurrentUser,
   useDemoLogin,
+  useDevLogin,
+  useDevRegister,
   useStartLogin,
 } from '@/features/auth/api'
 import { safeReturnTo } from '@/features/auth/return-to'
@@ -24,16 +27,18 @@ export interface LoginPageProps {
 }
 
 /**
- * Sign-in offers two planes. The real-account plane verifies the Gateway
+ * Sign-in offers three planes. The real-account plane verifies the Gateway
  * HttpOnly cookie through `/api/v1/me` and starts the external IDaaS login
- * when absent. The demo plane signs in against the MSW-mocked store
- * (`/mock-api/auth/login`, any email) and drives the local mock pages without
- * touching the real backend.
+ * when absent. The dev-account plane registers/logs into a local account
+ * through the Temporary Dev Email Auth bridge (`/auth/dev/*`; DEV ONLY) so
+ * multi-user flows work against the real backend without IDaaS. The demo plane
+ * signs in against the MSW-mocked store (`/mock-api/auth/login`, any email)
+ * and drives the local mock pages without touching the real backend.
  */
 export function LoginPage({ replaceLocation = replaceBrowserLocation }: LoginPageProps) {
   const [search] = useSearchParams()
   const returnTo = safeReturnTo(search.get('returnTo'))
-  const [tab, setTab] = useState<'cloud' | 'demo'>('cloud')
+  const [tab, setTab] = useState<'cloud' | 'dev' | 'demo'>('cloud')
   const demoToken = useDemoAuthStore((s) => s.token)
   const loggedOut = useDemoAuthStore((s) => s.loggedOut)
   const currentUser = useCurrentUser()
@@ -72,9 +77,10 @@ export function LoginPage({ replaceLocation = replaceBrowserLocation }: LoginPag
             真实账号连接后端协作空间；演示账号使用本地模拟数据。
           </p>
         </div>
-        <Tabs value={tab} onValueChange={(v) => setTab(v === 'demo' ? 'demo' : 'cloud')}>
-          <TabsList className="grid w-full grid-cols-2">
+        <Tabs value={tab} onValueChange={(v) => setTab(v === 'dev' || v === 'demo' ? v : 'cloud')}>
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="cloud">真实账号</TabsTrigger>
+            <TabsTrigger value="dev">开发账号</TabsTrigger>
             <TabsTrigger value="demo">演示账号</TabsTrigger>
           </TabsList>
           <TabsContent value="cloud">
@@ -88,6 +94,9 @@ export function LoginPage({ replaceLocation = replaceBrowserLocation }: LoginPag
                 beginLogin()
               }}
             />
+          </TabsContent>
+          <TabsContent value="dev">
+            <DevEmailPanel />
           </TabsContent>
           <TabsContent value="demo">
             <DemoSignInForm />
@@ -157,6 +166,98 @@ function CloudAuthPanel({
       </div>
       {action}
     </div>
+  )
+}
+
+/** Maps a dev email auth failure to a screen-friendly message. */
+function devAuthErrorMessage(error: unknown): string {
+  if (isAxiosError(error)) {
+    const status = error.response?.status
+    const code = (error.response?.data as { code?: string } | undefined)?.code
+    if (status === 409) return '该邮箱已注册，请直接登录。'
+    if (status === 401) return '该邮箱尚未注册，请先注册。'
+    if (status === 404 && code === 'dev_auth_disabled') return '开发账号登录未启用。'
+  }
+  return '操作失败，请重试。'
+}
+
+/**
+ * Dev email auth against the local dev bridge (Temporary Dev Email Auth): a
+ * registered account joins the dev tenant (0 Workspace stays legal), login
+ * requires an existing account, and the bridge session makes `/api/v1/me`
+ * resolve the account so the login screen redirects into the app. DEV ONLY —
+ * production accounts come from the IDaaS gateway.
+ */
+function DevEmailPanel() {
+  const [mode, setMode] = useState<'register' | 'login'>('register')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const register = useDevRegister()
+  const login = useDevLogin()
+  const pending = register.isPending || login.isPending
+  const error = register.isError ? register.error : login.isError ? login.error : undefined
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        const value = email.trim()
+        if (!value) return
+        if (mode === 'register') register.mutate({ name: name.trim(), email: value })
+        else login.mutate(value)
+      }}
+      className="space-y-4"
+    >
+      {mode === 'register' && (
+        <div className="space-y-1.5">
+          <Label htmlFor="dev-name">姓名</Label>
+          <Input
+            id="dev-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="例如 Alice"
+            autoComplete="name"
+            required
+          />
+        </div>
+      )}
+      <div className="space-y-1.5">
+        <Label htmlFor="dev-email">邮箱</Label>
+        <Input
+          id="dev-email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.test"
+          autoComplete="email"
+          required
+        />
+      </div>
+      <Button type="submit" className="w-full" disabled={pending}>
+        {pending ? '处理中…' : mode === 'register' ? '注册并登录' : '登录'}
+      </Button>
+      {mode === 'register' ? (
+        <p className="text-center text-xs text-muted-foreground">
+          已有账号？
+          <button type="button" className="underline" onClick={() => setMode('login')}>
+            直接登录
+          </button>
+        </p>
+      ) : (
+        <p className="text-center text-xs text-muted-foreground">
+          没有账号？
+          <button type="button" className="underline" onClick={() => setMode('register')}>
+            注册一个
+          </button>
+        </p>
+      )}
+      <p className="text-center text-xs text-muted-foreground">
+        开发账号连接本地后端，用于多用户测试；不调用统一身份认证。
+      </p>
+      {error && (
+        <p className="text-center text-xs text-destructive">{devAuthErrorMessage(error)}</p>
+      )}
+    </form>
   )
 }
 

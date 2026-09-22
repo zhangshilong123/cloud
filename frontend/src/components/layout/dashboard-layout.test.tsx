@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom'
@@ -104,7 +105,28 @@ describe('DashboardLayout', () => {
       ),
     )
     renderRouter('/default/issues')
-    expect(await screen.findByText(/尚未加入任何工作区/)).toBeInTheDocument()
+    expect(await screen.findByText(/加入任何工作区/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '创建工作区' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument()
     expect(screen.queryByText('Issues screen')).not.toBeInTheDocument()
+  })
+
+  it('opens the create-space dialog from the empty workspace state', async () => {
+    server.use(
+      http.get('/api/v1/me/tenants', () =>
+        HttpResponse.json({
+          items: [{ id: TEST_TENANT_ID, name: '研发组织', status: 'active', role: 'admin' }],
+          nextCursor: '',
+        }),
+      ),
+      http.get(`/api/v1/tenants/${TEST_TENANT_ID}/spaces`, () =>
+        HttpResponse.json({ items: [], nextCursor: '' }),
+      ),
+    )
+    renderRouter('/default/issues')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '创建工作区' }))
+    expect(screen.getByText('新建工作区')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '创建' })).toBeInTheDocument()
   })
 })

@@ -28,7 +28,9 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/wanglongan587/cloud/internal/api/router"
+	"github.com/wanglongan587/cloud/internal/collab"
 	"github.com/wanglongan587/cloud/internal/core"
+	"github.com/wanglongan587/cloud/internal/gateway/devemail"
 	"github.com/wanglongan587/cloud/internal/simulator"
 )
 
@@ -79,6 +81,17 @@ func run() error {
 		return fmt.Errorf("migrate: %w", e)
 	}
 
+	// Wire the dev collaboration fixtures (agents/teams/workflows, form
+	// descriptors, deterministic context, mock execution) so the Issue @ picker
+	// and the workflow form are usable in the demo. This restores what the
+	// pre-merge cmd/ora-web did; production servers leave these ports nil
+	// ("Unavailable") and wire real adapters instead.
+	store.Directory = collab.FixtureCollaborationDirectory{}
+	store.Context = collab.DeterministicContextBuilder{}
+	store.Dispatcher = collab.MockExecutionDispatcher{}
+	store.Forms = collab.FixtureFormDescriptorProvider{}
+	store.Assist = collab.MockInputAssistProvider{}
+
 	credentials, e := simulator.NewCredentials()
 	if e != nil {
 		return e
@@ -96,18 +109,33 @@ func run() error {
 		return e
 	}
 	tid := bootstrap.S("tenantId")
-	uid := bootstrap.S("userId")
 
-	// The two identities the browser acts under: the gateway (service) and the demo user.
-	gateway := core.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "demo-gateway"}}
-	user := core.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "alice"}, Source: "demo", DisplayName: "Alice", Caller: "demo-gateway"}
+	// Temporary Development Email Auth (dev-only; see internal/gateway/devemail).
+	// Enables register-by-email / login-as-a-different-account / add-by-email in
+	// local dev. Enabled by default; DEMO_DEV_AUTH=0 makes register/login 404.
+	// The production gateway never mounts this adapter.
+	devAuth := &devemail.Adapter{
+		Store:    store,
+		TenantID: tid,
+		Enabled:  os.Getenv("DEMO_DEV_AUTH") != "0",
+		Sessions: devemail.NewSessions(),
+	}
 
-	inject := func(r *http.Request) error {
+	// The two identities the browser acts under: the gateway (service) and the
+	// demo user. Service subject matches the devemail adapter so dev sessions
+	// and the fallback demo user both bind to the same service identity.
+	gateway := core.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: devemail.ServiceSubject}}
+	alice := core.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: "alice"}, Source: "demo", DisplayName: "Alice", Caller: devemail.ServiceSubject}
+
+	// Session-aware injection: a live dev email session resolves to that account;
+	// otherwise the request falls back to the seeded demo user (alice) so a fresh
+	// browser is immediately usable (post-clone preview).
+	inject := func(r *http.Request, user *core.Claims) error {
 		gw, e := credentials.Token("gateway", gateway)
 		if e != nil {
 			return e
 		}
-		usr, e := credentials.Token("user", user)
+		usr, e := credentials.Token("user", *user)
 		if e != nil {
 			return e
 		}
@@ -115,17 +143,46 @@ func run() error {
 		r.Header.Set("X-Ora-User-Token", usr)
 		return nil
 	}
+	resolve := func(r *http.Request) core.Claims {
+		if claims, ok := devAuth.Resolve(r); ok {
+			return claims
+		}
+		return alice
+	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/auth/dev/register", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		devAuth.Register(w, r)
+	})
+	mux.HandleFunc("/auth/dev/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		devAuth.Login(w, r)
+	})
+	mux.HandleFunc("/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		devAuth.Logout(w, r)
+	})
 	mux.HandleFunc("/demo/config", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		b, _ := json.Marshal(demoConfig(r.Context(), store, tid, uid, &user))
+		claims := resolve(r)
+		b, _ := json.Marshal(demoConfig(r.Context(), store, tid, &claims))
 		_, _ = w.Write(b)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
-			if e := inject(r); e != nil {
+			claims := resolve(r)
+			if e := inject(r, &claims); e != nil {
 				http.Error(w, e.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -179,7 +236,8 @@ func openBrowser(url string) error {
 // demoConfig assembles the live status catalog and label list straight from the store so the UI
 // reflects custom columns and labels created during the demo session. The browser stays untrusted:
 // these reads are server-side calls to the same core used by the public API.
-func demoConfig(ctx context.Context, store *core.Store, tid, uid string, user *core.Claims) map[string]any {
+func demoConfig(ctx context.Context, store *core.Store, tid string, user *core.Claims) map[string]any {
+	me, _, _ := store.Public(ctx, &core.PublicRequest{Method: "GET", Path: "/api/v1/me", Identity: user})
 	statuses, _, _ := store.Public(ctx, &core.PublicRequest{Method: "GET", Path: "/api/v1/tenants/" + tid + "/issue-statuses", TenantID: tid, Identity: user})
 	labels, _, _ := store.Public(ctx, &core.PublicRequest{Method: "GET", Path: "/api/v1/tenants/" + tid + "/labels", TenantID: tid, Identity: user})
 	members, _, _ := store.Public(ctx, &core.PublicRequest{Method: "GET", Path: "/api/v1/tenants/" + tid + "/members", TenantID: tid, Identity: user})
@@ -209,7 +267,7 @@ func demoConfig(ctx context.Context, store *core.Store, tid, uid string, user *c
 	}
 	return map[string]any{
 		"tenantId":   tid,
-		"user":       map[string]any{"id": uid, "subject": "alice", "displayName": "Alice"},
+		"user":       map[string]any{"id": me.S("id"), "subject": user.Subject, "displayName": user.DisplayName},
 		"statuses":   statusList,
 		"labels":     labelList,
 		"members":    memberList,
