@@ -23,7 +23,10 @@ export function InboxPage({ slug }: { slug: string }) {
   const { data: items, isPending } = useInboxItems(slug)
   const markRead = useMarkInboxRead(slug)
   const markAllRead = useMarkAllInboxRead(slug)
-  const unreadCount = items?.filter((i) => !i.read).length ?? 0
+  // Guard against a malformed payload (e.g. the SPA fallback served when the
+  // MSW service worker is not intercepting) so the page never crashes.
+  const inboxItems = Array.isArray(items) ? items : []
+  const unreadCount = inboxItems.filter((i) => !i.read).length
 
   return (
     <div className="flex h-full flex-col">
@@ -45,10 +48,10 @@ export function InboxPage({ slug }: { slug: string }) {
             ))}
           </div>
         )}
-        {items?.length === 0 && (
+        {inboxItems.length === 0 && !isPending && (
           <p className="p-8 text-center text-sm text-muted-foreground">暂无新消息。</p>
         )}
-        {items?.map((item) => {
+        {inboxItems.map((item) => {
           const Icon = TYPE_ICON[item.type]
           const actor = actorById(item.actorId)
           return (

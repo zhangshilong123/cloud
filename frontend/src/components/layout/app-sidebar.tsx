@@ -155,8 +155,10 @@ export function AppSidebar({ slug, user }: { slug: string; user: User | undefine
   const logout = useLogout()
   const { cloudMode, spaces, tenantId, space } = useCurrentSpace()
   const demoUser = useDemoAuthStore((s) => s.user)
-  const { data: inboxItems = [] } = useInboxItems(slug)
-  const unreadCount = inboxItems.filter((i) => !i.read).length
+  const { data: inboxItems } = useInboxItems(slug)
+  // Guard against a malformed payload (e.g. the SPA fallback served when the
+  // MSW service worker is not intercepting) so the sidebar never crashes.
+  const unreadCount = Array.isArray(inboxItems) ? inboxItems.filter((i) => !i.read).length : 0
   const activeWorkspace = space ?? workspaceBySlug(slug) ?? db.workspace
   // Cloud sessions switch between real spaces (collaboration pages), mock
   // sessions between the demo store workspaces.
