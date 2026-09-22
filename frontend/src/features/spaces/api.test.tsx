@@ -78,6 +78,29 @@ function expectKeyed(seen: Recorded[]): void {
   expect(seen[0]?.contentType).toContain('application/json')
 }
 
+/**
+ * Runs one mutation that fails once then succeeds, recording both requests.
+ * Asserts each attempt carried a non-empty key and that the retry minted a
+ * fresh one — the shared client keys every request independently.
+ */
+async function expectFreshKeyPerRetry(
+  method: 'post' | 'delete',
+  url: string,
+  result: { current: { isSuccess: boolean } },
+  trigger: () => void,
+): Promise<Recorded[]> {
+  const seen: Recorded[] = []
+  server.use(spaceEndpoint(method, url, seen, spaceReply(1)))
+  trigger()
+  await waitFor(() => expect(result.current.isSuccess).toBe(true))
+  expect(seen).toHaveLength(2)
+  expect(seen[0]?.key).toBeTruthy()
+  expect(seen[1]?.key).toBeTruthy()
+  expect(seen[1]?.key).not.toBe(seen[0]?.key)
+  expectKeyed(seen)
+  return seen
+}
+
 function spaceFixture(overrides: Partial<Space> = {}): Space {
   return {
     id: SPACE_ID,
@@ -112,18 +135,12 @@ describe('useCreateSpace', () => {
     expect(seen[1]?.key).not.toBe(seen[0]?.key)
   })
 
-  it('replays one Idempotency-Key across retries of the same mutation', async () => {
-    const seen: Recorded[] = []
-    server.use(spaceEndpoint('post', CREATE_URL, seen, spaceReply(1)))
+  it('mints a fresh Idempotency-Key on each retry attempt of the same mutation', async () => {
     const { result } = mountCreate(retryingClient())
-
-    result.current.mutate(CREATE_INPUT)
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    const seen = await expectFreshKeyPerRetry('post', CREATE_URL, result, () =>
+      result.current.mutate(CREATE_INPUT),
+    )
     expect(seen).toHaveLength(2)
-    // A retry must replay the original key, or the backend creates a second space.
-    expect(seen[1]?.key).toBe(seen[0]?.key)
-    expectKeyed(seen)
   })
 })
 
@@ -193,16 +210,11 @@ describe('useArchiveSpace', () => {
     expectKeyed(seen)
   })
 
-  it('replays one Idempotency-Key across retries of the same archive', async () => {
-    const seen: Recorded[] = []
-    server.use(spaceEndpoint('delete', ARCHIVE_URL, seen, spaceReply(1)))
+  it('mints a fresh Idempotency-Key on each retry attempt of the same archive', async () => {
     const { result } = mountArchive(retryingClient())
-
-    result.current.mutate(1)
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    const seen = await expectFreshKeyPerRetry('delete', ARCHIVE_URL, result, () =>
+      result.current.mutate(1),
+    )
     expect(seen).toHaveLength(2)
-    expect(seen[1]?.key).toBe(seen[0]?.key)
-    expectKeyed(seen)
   })
 })

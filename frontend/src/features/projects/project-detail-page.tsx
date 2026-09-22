@@ -34,8 +34,9 @@ import {
   useUpdateProject,
 } from '@/features/projects/api'
 import { PROJECT_STATUS_LABELS, PROJECT_STATUS_VARIANT } from '@/features/projects/status'
-import { useIssues } from '@/features/issues/api'
+import { useIssues, useMembers } from '@/features/issues/api'
 import { IssueRow } from '@/features/issues/components/issue-row'
+import { memberNameById } from '@/features/issues/present'
 import { normalizeSpaceRole, type SpaceRole } from '@/features/spaces/api'
 import { useCurrentSpace } from '@/features/spaces/current-space'
 import { workspacePaths } from '@/lib/paths'
@@ -105,7 +106,14 @@ function canDeleteProject(role: SpaceRole): boolean {
 
 /** Project header, status line and the issue list below the page chrome. */
 function ProjectDetailBody({ slug, project }: { slug: string; project: Project }) {
-  const { data: issues } = useIssues(slug, { projectId: project.id })
+  const { tenantId, space } = useCurrentSpace()
+  const cloudMode = space?.slug === slug
+  // Issues live on the real tenant board, tagged with the cloud project id via
+  // `projectRef`; the demo plane has no real issues, so the list is cloud-only.
+  const { data: issues } = useIssues(cloudMode ? (tenantId ?? '') : '', undefined)
+  const { data: members } = useMembers(cloudMode ? (tenantId ?? '') : '')
+  const memberNames = memberNameById(members)
+  const projectIssues = (issues ?? []).filter((issue) => issue.projectRef === project.id)
   const lead = actorById(project.leadId)
 
   return (
@@ -132,11 +140,11 @@ function ProjectDetailBody({ slug, project }: { slug: string; project: Project }
         </div>
       </div>
       <div>
-        {issues?.length === 0 && (
+        {issues !== undefined && projectIssues.length === 0 && (
           <p className="p-8 text-center text-sm text-muted-foreground">该项目下暂无任务。</p>
         )}
-        {issues?.map((issue) => (
-          <IssueRow key={issue.id} issue={issue} slug={slug} />
+        {projectIssues.map((issue) => (
+          <IssueRow key={issue.id} issue={issue} slug={tenantId ?? slug} members={memberNames} />
         ))}
       </div>
     </div>

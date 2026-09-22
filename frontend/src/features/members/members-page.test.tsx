@@ -6,6 +6,7 @@ import { MembersPage } from '@/features/members/members-page'
 import { db } from '@/mocks/data/store'
 import { installCloudSpaceHandlers, TEST_SPACE_ID, TEST_TENANT_ID } from '@/test/cloud-handlers'
 import { renderWithProviders } from '@/test/render'
+import { jsonObject } from '@/mocks/handlers/shared'
 import { server } from '@/test/msw-server'
 
 const ALICE_ID = '33333333-3333-3333-3333-333333333333'
@@ -42,6 +43,16 @@ function renderOwner() {
   })
 }
 
+/** Renders the page for a session with Alice(owner) + Bob(member) in the list. */
+function renderTwoMemberPage(role: 'owner' | 'admin' | 'member') {
+  installCloudSpaceHandlers(role)
+  installMembersHandler([memberRow(ALICE_ID, 'Alice', 'owner'), memberRow(BOB_ID, 'Bob', 'member')])
+  renderWithProviders(<MembersPage slug="cloud-dev" />, {
+    slug: 'cloud-dev',
+    authenticated: true,
+  })
+}
+
 /** Types an email into the open add-member dialog and submits the add. */
 async function typeAndSubmitEmail(
   user: ReturnType<typeof userEvent.setup>,
@@ -53,15 +64,7 @@ async function typeAndSubmitEmail(
 
 describe('MembersPage cloud mode', () => {
   it('renders real members and hides management controls from members', async () => {
-    installCloudSpaceHandlers('member')
-    installMembersHandler([
-      memberRow(ALICE_ID, 'Alice', 'owner'),
-      memberRow(BOB_ID, 'Bob', 'member'),
-    ])
-    renderWithProviders(<MembersPage slug="cloud-dev" />, {
-      slug: 'cloud-dev',
-      authenticated: true,
-    })
+    renderTwoMemberPage('member')
 
     expect(await screen.findByText('Alice')).toBeInTheDocument()
     expect(await screen.findByText('Bob')).toBeInTheDocument()
@@ -80,11 +83,14 @@ describe('MembersPage cloud mode', () => {
     let postBody: unknown = null
     let idempotencyKey = ''
     server.use(
-      http.post(`/api/v1/tenants/${TEST_TENANT_ID}/spaces/${TEST_SPACE_ID}/members`, async ({ request }) => {
-        postBody = await request.json()
-        idempotencyKey = request.headers.get('Idempotency-Key') ?? ''
-        return HttpResponse.json(memberRow(BOB_ID, 'Bob', 'member'))
-      }),
+      http.post(
+        `/api/v1/tenants/${TEST_TENANT_ID}/spaces/${TEST_SPACE_ID}/members`,
+        async ({ request }) => {
+          postBody = await request.json()
+          idempotencyKey = request.headers.get('Idempotency-Key') ?? ''
+          return HttpResponse.json(memberRow(BOB_ID, 'Bob', 'member'))
+        },
+      ),
     )
 
     await user.click(screen.getByRole('button', { name: '添加成员' }))
@@ -143,38 +149,26 @@ describe('MembersPage cloud mode', () => {
   })
 
   it('shows role select and remove for the owner actor; owner rows are not removable', async () => {
-    installCloudSpaceHandlers('owner')
-    installMembersHandler([
-      memberRow(ALICE_ID, 'Alice', 'owner'),
-      memberRow(BOB_ID, 'Bob', 'member'),
-    ])
-    renderWithProviders(<MembersPage slug="cloud-dev" />, {
-      slug: 'cloud-dev',
-      authenticated: true,
-    })
+    renderTwoMemberPage('owner')
     await screen.findByText('Alice')
 
     // The member row gets a role selector and a remove action.
     expect(screen.getByLabelText('Bob 的角色')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '移除' })).toBeInTheDocument()
-    // Owner rows keep the role selector (grant/demote via the API) but carry no
-    // remove and no disable (backend last-owner invariant).
+    // Owner rows keep the role selector but are neither removable nor
+    // toggleable: no remove action, and their disable control renders inert
+    // (the backend rejects mutating the last owner).
     expect(screen.getByLabelText('Alice 的角色')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: '移除' })).toHaveLength(1)
-    expect(screen.getByRole('button', { name: '禁用' })).toBeDisabled()
+    const disableToggles = screen.getAllByRole('button', { name: '禁用' })
+    expect(disableToggles).toHaveLength(2) // one per row under an owner actor
+    expect(disableToggles[0]).toBeDisabled() // Alice (owner) row: inert
+    expect(disableToggles[1]).toBeEnabled() // Bob (member) row: toggleable
   })
 
   it('keeps admin to add-only: add preserved, no remove, owner role not offered', async () => {
-    installCloudSpaceHandlers('admin')
-    installMembersHandler([
-      memberRow(ALICE_ID, 'Alice', 'owner'),
-      memberRow(BOB_ID, 'Bob', 'member'),
-    ])
+    renderTwoMemberPage('admin')
     const user = userEvent.setup()
-    renderWithProviders(<MembersPage slug="cloud-dev" />, {
-      slug: 'cloud-dev',
-      authenticated: true,
-    })
     await screen.findByText('Alice')
 
     expect(screen.getByRole('button', { name: '添加成员' })).toBeInTheDocument()
@@ -186,27 +180,23 @@ describe('MembersPage cloud mode', () => {
   })
 
   it('confirms membership-only removal before calling the DELETE member endpoint', async () => {
-    installCloudSpaceHandlers('owner')
-    installMembersHandler([
-      memberRow(ALICE_ID, 'Alice', 'owner'),
-      memberRow(BOB_ID, 'Bob', 'member'),
-    ])
+    renderTwoMemberPage('owner')
     const user = userEvent.setup()
-    renderWithProviders(<MembersPage slug="cloud-dev" />, {
-      slug: 'cloud-dev',
-      authenticated: true,
-    })
     await screen.findByText('Alice')
     let deleted = false
     let idempotencyKey = ''
     let bodyVersion: unknown
     server.use(
-      http.delete(`/api/v1/tenants/${TEST_TENANT_ID}/spaces/${TEST_SPACE_ID}/members/${BOB_ID}`, async ({ request }) => {
-        deleted = true
-        idempotencyKey = request.headers.get('Idempotency-Key') ?? ''
-        bodyVersion = (await request.clone().json())['version']
-        return HttpResponse.json(memberRow(BOB_ID, 'Bob', 'member'))
-      }),
+      http.delete(
+        `/api/v1/tenants/${TEST_TENANT_ID}/spaces/${TEST_SPACE_ID}/members/${BOB_ID}`,
+        async ({ request }) => {
+          deleted = true
+          idempotencyKey = request.headers.get('Idempotency-Key') ?? ''
+          const body = jsonObject(await request.clone().json())
+          bodyVersion = body['version']
+          return HttpResponse.json(memberRow(BOB_ID, 'Bob', 'member'))
+        },
+      ),
     )
 
     await user.click(screen.getByRole('button', { name: '移除' }))
