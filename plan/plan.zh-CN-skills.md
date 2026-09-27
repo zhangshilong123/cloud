@@ -768,6 +768,11 @@ Run Again / 新逻辑执行：
 
 不得混淆 Retry 与 Run Again。
 
+首个 Attempt 与 Execution 在同一个 admission 事务内原子创建，初始为 durable `eligible`（node/lease/epoch/
+dispatch metadata 为空）。admitted Execution 必然同时具备完整 Skill snapshot 与首 Attempt——不存在
+「已 admitted 但尚未尝试」的状态。Controller 只 claim/dispatch 已存在的 Attempt；retry 创建新 Attempt
+（`ordinal` 递增），沿用同一 frozen input。
+
 ## 16.1 Attempt 内 local retry
 
 Transient retrieval failure 可以在同一个 Attempt 内 retry。
@@ -1907,32 +1912,54 @@ soft-deleted Skill 与 disabled binding。
       revision/digest（ADR D8/D10/D13；非 snapshot）。
 - [x] **无 execution surface**：Agent 表与 API 中无 `Execution`/`Attempt`/`ExecutionSkillBinding`、无
       capability/signed-URL/object locator、无 caller-supplied `skill_ids`（ADR D8/D13/D14）。
-- [ ] RetrievalCapability / Execution snapshot / Node 交付 / Agent UI 仍 NOT implemented（后续阶段）。
+- [ ] RetrievalCapability / Node 交付 / Agent UI 仍 NOT implemented（后续阶段；Execution snapshot 已由 Phase 5 交付）。
 
-Step 5B 仍 BLOCKED：Execution snapshot（Phase 5）现已具备其 durable `AgentSkillBinding` selection authority，
-但它本身尚未实现。
+Step 5B（Execution snapshot，Phase 5）现已落地：具备 durable `AgentSkillBinding` selection authority 后，
+Execution/Attempt/ExecutionSkillBinding 已实现（见下方 Phase 5）。
 
 ## Phase 5 — Execution snapshot
 
-> 状态：**BLOCKED** —— 依赖 durable `AgentSkillBinding`（Phase 4A 契约已冻结；Phase 4B 实现已落地 ——
-> `enabledAgentSkillBindings` 读 seam 即 selection authority）。契约是
-> `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md`（`proposed`），已修订为只消费 durable
-> `AgentSkillBinding`。
+状态：**implemented**。`specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md`（`implemented`）冻结的
+逻辑 `Execution` / 物理 `Attempt` / 不可变 `ExecutionSkillBinding` 模型现已落地：forward migration
+`0018_execution_snapshot.sql`、`internal/core/executions.go`（`AdmitExecution` / `CreateRetryAttempt` /
+`RunAgainExecution` Store seam），以及内部控制契约的 `SkillRunSpec`/`SkillBundleRef` 扩展。它**不**实现
+RetrievalCapability 签发、dispatch/claim/lease、credential/object-locator 字段（ADR D8/D7）：durable PostgreSQL
+snapshot 是后续 capability 签发唯一被授权的依据。
 
-- Execution 创建时解析 enabled Agent Skills；
-- exact revision binding；
-- immutable dispatch descriptor；
-- retry/new Attempt semantics。
+- [x] **Migration** `0018_execution_snapshot.sql`：`executions`（逻辑身份，无 version/updated_at/deleted_at）、
+      `attempts`（物理，`ordinal` + 状态机，`UNIQUE(execution_id, ordinal)`）、`execution_skill_bindings`（不可变
+      fact，复合外键 `(skill_revision_id, skill_id)`，trigger 阻止 UPDATE，无 bearer-credential 字段）。
+      `0015`/`0016`/`0017` 不变。
+- [x] **Core** `internal/core/executions.go`：`AdmitExecution` 解析 durable enabled bindings → exact current
+      revision（fail-closed `skill_revision_not_available`），原子写入 Execution + 首个 eligible Attempt + 全部
+      binding；`CreateRetryAttempt` 复用 frozen bindings 而不重新解析；`RunAgainExecution` 新建 Execution 并重新
+      解析。`skillBundles` 返回按 `canonical_name`→`skill_id` 排序的 frozen descriptor（ADR D4/D12）。
+- [x] **Proto** `ExecutionInput.oneof spec` 新增 `SkillRunSpec skill_run = 2` 携带 `SkillBundleRef[]`；生成
+      `internal/controlpb` 已再生成并对账（固定插件、`protoc (unknown)`）。
+- [x] **Tests** `integration/execution_snapshot_test.go` 固定 `specs/test-cases/cloud/skills/execution-skill-snapshot.md`
+      的稳定 anchors，外加 migration fresh/upgrade。
+- [ ] RetrievalCapability 签发 / dispatch-claim-lease / Node 交付 / Agent UI 仍 NOT implemented（后续阶段）。
+
+已冻结的首 Attempt 契约（ADR D3）：
+
+- admission 在**同一个 database-only 事务**内创建 `Execution` + **首个 `Attempt`** + 全部
+  `ExecutionSkillBinding` 行——事务内不执行任何 Node/Controller 外部效果（HTTP/RPC/进程/capability/
+  Object Storage）；
+- 首个 `Attempt` 初始为 durable `eligible`，`node_id` / lease / epoch / dispatch metadata 均为空；
+- Controller 只 claim/dispatch **已存在**的 Attempt，不创建首个 Attempt；
+- retry 创建新 Attempt（`ordinal` 递增），复用同一 Execution frozen snapshot；
+- crash recovery：admitted Execution 必然同时具备完整 Skill snapshot 与首 Attempt；不存在
+  「已 admitted 但无首 Attempt」的合法状态。
 
 ## Phase 6 — Retrieval capability
 
 ### Step 5A RetrievalCapability 契约 —— 已冻结（仅设计）
 
-状态：**契约已冻结；实现 NOT started；所有改动保持 uncommitted**。RetrievalCapability 契约由
-`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md`（`proposed`）及其 Node 侧一致性契约
+状态：**契约已冻结；Cloud 侧实现在 Step 5B 落地；所有改动保持 uncommitted**。RetrievalCapability 契约由
+`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md`（`implemented`）及其 Node 侧一致性契约
 `specs/decisions/node/agent-runtime/0-skill-materialization-and-readiness.md`（`proposed`）闭合，镜像测试用例在
 `specs/test-cases/controller/skill-delivery/` 与 `specs/test-cases/node/agent-runtime/`。Step 5A 将这两份 ADR（此前
-登记在 `cloud/skills/`）迁到规范化的 Controller/Node 叶子域，并闭合遗留开放问题。**不写实现代码、无 schema 变更。**
+登记在 `cloud/skills/`）迁到规范化的 Controller/Node 叶子域，并闭合遗留开放问题。**无 schema 变更（ADR D13）。**
 
 - [x] **授权依据**：仅对已冻结进 Execution `ExecutionSkillBinding` 的 revision 签发 capability；claim/dispatch
       时绝不重新解析 `Skill.current_revision_id`。
@@ -1953,14 +1980,37 @@ Step 5B 仍 BLOCKED：Execution snapshot（Phase 5）现已具备其 durable `Ag
       authorization_failed / temporary_control_plane_failure。
 - [x] **缺失对象**：签发前不 Stat/HEAD；Node 404 → `object_not_available`，fail closed。
 - [x] **schema 影响**：NONE。
-- [ ] **实现**（capability mint/refresh、Node downloader/cache、READY barrier）NOT started（后续切片）。
+- [x] **Cloud 侧实现**（capability mint/refresh）在 Step 5B 交付；Node downloader/cache/READY barrier 留待后续阶段。
 
-### 实现（后续切片）
+### Step 5B RetrievalCapability 实现 —— IMPLEMENTED（Cloud 侧）
 
-- capability mint/refresh；
-- short-lived exact-object read authorization；
-- secret redaction/non-persistence；
-- Controller/Node transport contract。
+状态：**已实现（Cloud 侧 mint/refresh）；Node downloader/cache 与 Controller relay 留待 Phase 6/7**。
+`0-skill-retrieval-capability.md` 的 Cloud 侧现为代码：`internal/skillstore/retrieval.go`
+（`RetrievalCapabilityIssuer` port + 脱敏 `RetrievalCapability` 值）、`internal/skillstore/s3store/issuer.go`
+（S3 `PresignGetObject` exact-object GET 签发）、`internal/core/retrieval.go`
+（`MintSkillRetrievalCapabilities`：transact 解析 `(execution, attempt, skill_revision)` 权威 → 解析冻结
+`object_locator` → 签发）、`MintSkillRetrieval` control-gRPC RPC + D32 错误分类映射、配置
+`storage.retrieval_capability_ttl`（默认 300s / 上限 900s）、`cmd/server` issuer 装配。无持久化、无 schema 变更、
+签发前不 Stat、不记录 credential（脱敏 `String()` + 仅错误类名的 fault 消息）。
+
+- [x] **Issuer 边界** `RetrievalCapabilityIssuer`（`Issue(ctx, Locator, ttl) → {URL, Method, ExpiresAt}`）——与 durable
+      `ObjectStore` 分离；`ObjectStore` port 不变（不加 Presign）。
+- [x] **S3 签发** `s3store.NewIssuer` + `Issue`：对 exact bucket + 逻辑 `locator` 做 `PresignGetObject`，仅 GET，TTL
+      钳制到配置上限；无存在性探测。
+- [x] **权威** `resolveRetrievalTargets`：`(execution_id, attempt_id)` 必须指向存活的非 terminal Attempt，且每个
+      `skill_revision_id` 必须是冻结的 `ExecutionSkillBinding` revision、其 `object_locator` 可解析；否则 fail
+      closed（`authorization_failed`/`revision_not_bound`/`attempt_not_eligible`）。
+- [x] **terminal fencing**：`succeeded/failed/canceled/superseded` 的 Attempt 永不签发（409 `attempt_not_eligible`）。
+- [x] **无持久化/脱敏**：mint/refresh 不新增任何 durable 行、无 credential 列；bearer URL 绝不进日志或 durable 状态。
+- [x] **失败分类** `storage_not_configured`/`revision_not_bound`/`attempt_not_eligible`/`signing_failed`/
+      `invalid_locator`/`authorization_failed` 在 `internal/controlgrpc/fault.go` 映射；provider 细节绝不外泄。
+- [x] **gRPC** `MintSkillRetrieval(execution_id, attempt_id, skill_revision_id[]) → capabilities[]`；请求不含
+      locator/bucket/key/URL。
+- [x] **配置** `storage.retrieval_capability_ttl`（0→300s 默认；`<=0` 或 `>900s` 拒绝）。
+- [x] **测试** `internal/skillstore/retrieval_test.go`（脱敏）、`internal/skillstore/s3store/issuer_test.go`
+      （exact-object GET / 签发错误 / 非正 TTL / 真实 SDK signed URL）、`integration/retrieval_capability_test.go`
+      （授权、terminal fencing、storage_not_configured、invalid_locator、无持久化、refresh 保持 revision）。
+- [ ] Node downloader/cache、Controller relay（不代理/不选 revision）、READY barrier —— 后续阶段。
 
 ## Phase 7 — Node verified cache
 

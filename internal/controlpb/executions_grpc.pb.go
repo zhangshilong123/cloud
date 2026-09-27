@@ -26,6 +26,7 @@ const (
 	ExecutionService_RecordQueriedResult_FullMethodName   = "/ora.cloud.internal.v1.ExecutionService/RecordQueriedResult"
 	ExecutionService_GetDispatch_FullMethodName           = "/ora.cloud.internal.v1.ExecutionService/GetDispatch"
 	ExecutionService_ListPendingDispatches_FullMethodName = "/ora.cloud.internal.v1.ExecutionService/ListPendingDispatches"
+	ExecutionService_MintSkillRetrieval_FullMethodName    = "/ora.cloud.internal.v1.ExecutionService/MintSkillRetrieval"
 )
 
 // ExecutionServiceClient is the client API for ExecutionService service.
@@ -57,6 +58,13 @@ type ExecutionServiceClient interface {
 	// Lists registered executions without a result so a recovering or replacement worker resumes
 	// the original executions instead of creating new ones.
 	ListPendingDispatches(ctx context.Context, in *ListPendingDispatchesRequest, opts ...grpc.CallOption) (*ListPendingDispatchesResponse, error)
+	// Mints one short-lived, GET-only, exact-object retrieval capability per frozen skill revision for
+	// an eligible (non-terminal) Attempt, after verifying the durable (execution, attempt,
+	// skill_revision) authority chain (Step 5B RetrievalCapability ADR). A refresh for the same triple
+	// returns a fresh capability over the same frozen revision; nothing is persisted and no new
+	// Execution/Attempt/Binding is created. `url` is a bearer credential and must never be logged or
+	// persisted by any party.
+	MintSkillRetrieval(ctx context.Context, in *MintSkillRetrievalRequest, opts ...grpc.CallOption) (*MintSkillRetrievalResponse, error)
 }
 
 type executionServiceClient struct {
@@ -127,6 +135,16 @@ func (c *executionServiceClient) ListPendingDispatches(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *executionServiceClient) MintSkillRetrieval(ctx context.Context, in *MintSkillRetrievalRequest, opts ...grpc.CallOption) (*MintSkillRetrievalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MintSkillRetrievalResponse)
+	err := c.cc.Invoke(ctx, ExecutionService_MintSkillRetrieval_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ExecutionServiceServer is the server API for ExecutionService service.
 // All implementations must embed UnimplementedExecutionServiceServer
 // for forward compatibility.
@@ -156,6 +174,13 @@ type ExecutionServiceServer interface {
 	// Lists registered executions without a result so a recovering or replacement worker resumes
 	// the original executions instead of creating new ones.
 	ListPendingDispatches(context.Context, *ListPendingDispatchesRequest) (*ListPendingDispatchesResponse, error)
+	// Mints one short-lived, GET-only, exact-object retrieval capability per frozen skill revision for
+	// an eligible (non-terminal) Attempt, after verifying the durable (execution, attempt,
+	// skill_revision) authority chain (Step 5B RetrievalCapability ADR). A refresh for the same triple
+	// returns a fresh capability over the same frozen revision; nothing is persisted and no new
+	// Execution/Attempt/Binding is created. `url` is a bearer credential and must never be logged or
+	// persisted by any party.
+	MintSkillRetrieval(context.Context, *MintSkillRetrievalRequest) (*MintSkillRetrievalResponse, error)
 	mustEmbedUnimplementedExecutionServiceServer()
 }
 
@@ -183,6 +208,9 @@ func (UnimplementedExecutionServiceServer) GetDispatch(context.Context, *GetDisp
 }
 func (UnimplementedExecutionServiceServer) ListPendingDispatches(context.Context, *ListPendingDispatchesRequest) (*ListPendingDispatchesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListPendingDispatches not implemented")
+}
+func (UnimplementedExecutionServiceServer) MintSkillRetrieval(context.Context, *MintSkillRetrievalRequest) (*MintSkillRetrievalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MintSkillRetrieval not implemented")
 }
 func (UnimplementedExecutionServiceServer) mustEmbedUnimplementedExecutionServiceServer() {}
 func (UnimplementedExecutionServiceServer) testEmbeddedByValue()                          {}
@@ -313,6 +341,24 @@ func _ExecutionService_ListPendingDispatches_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ExecutionService_MintSkillRetrieval_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MintSkillRetrievalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ExecutionServiceServer).MintSkillRetrieval(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ExecutionService_MintSkillRetrieval_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutionServiceServer).MintSkillRetrieval(ctx, req.(*MintSkillRetrievalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ExecutionService_ServiceDesc is the grpc.ServiceDesc for ExecutionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -343,6 +389,10 @@ var ExecutionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPendingDispatches",
 			Handler:    _ExecutionService_ListPendingDispatches_Handler,
+		},
+		{
+			MethodName: "MintSkillRetrieval",
+			Handler:    _ExecutionService_MintSkillRetrieval_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

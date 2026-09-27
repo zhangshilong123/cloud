@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -99,6 +100,17 @@ type Store struct {
 	// wires the in-memory fakestore and production a real provider adapter. The saga is the only
 	// consumer; no package bytes ever enter a database transaction.
 	SkillsObjectStore skillstore.ObjectStore
+
+	// RetrievalCapabilityIssuer is the ephemeral credential-issuing port (Step 5B ADR D28), separate
+	// from SkillsObjectStore: ObjectStore owns durable put/stat/get, the issuer mints short-lived
+	// GET-only retrieval capabilities. It is nil by default (mint reports storage_not_configured);
+	// cmd/server wires the S3 presign issuer alongside the ObjectStore. No capability is persisted.
+	RetrievalCapabilityIssuer skillstore.RetrievalCapabilityIssuer
+
+	// RetrievalCapabilityTTL is the lifetime of each minted capability (ADR D24): default 300s, hard
+	// maximum 900s. It is wired from the storage configuration; zero falls back to the default in the
+	// mint path.
+	RetrievalCapabilityTTL time.Duration
 }
 
 // NewStore obtains the injected SQL pool without creating or migrating schema.

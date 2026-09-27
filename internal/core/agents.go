@@ -149,12 +149,12 @@ func detachAgentSkill(t *transaction, r *PublicRequest, uid string) Object {
 	return b
 }
 
-// enabledAgentSkillBindings is the Skill-selection read seam for future Execution admission
-// (Execution snapshot ADR D3 step 2 / Agent ADR D8/D9). It returns the enabled durable bindings for
-// an Agent joined to their live (non-soft-deleted) Skill, deterministically ordered by the bound
-// Skill's canonical_name then skill_id (D10). It resolves NO revision/digest/locator — exact-revision
+// enabledAgentSkillBindings is the Skill-selection read seam for Execution admission (Execution
+// snapshot ADR D3 step 2 / Agent ADR D8/D9). It returns the enabled durable bindings for an Agent
+// joined to their live (non-soft-deleted) Skill, deterministically ordered by the bound Skill's
+// canonical_name then skill_id (D10). It resolves NO revision/digest/locator — exact-revision
 // freezing is the snapshot's job, not this mutable-config read.
-func enabledAgentSkillBindings(t *transaction, agentID string) []Object { //nolint:unused // Phase 5 Execution admission is the sole caller (Agent ADR D8/D9).
+func enabledAgentSkillBindings(t *transaction, agentID string) []Object {
 	return t.list(`SELECT ab.agent_id, ab.skill_id, ab.enabled, s.canonical_name, s.display_name
 		FROM agent_skill_bindings ab
 		JOIN skills s ON s.id=ab.skill_id

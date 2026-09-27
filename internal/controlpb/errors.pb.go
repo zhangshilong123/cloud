@@ -48,29 +48,73 @@ const (
 	ErrorCode_ERROR_CODE_LEASE_HELD ErrorCode = 6
 	// The service principal is not allowed to perform this call. Carried with PERMISSION_DENIED.
 	ErrorCode_ERROR_CODE_SERVICE_FORBIDDEN ErrorCode = 7
+	// RetrievalCapability (Step 5B) error taxonomy — see the skill-retrieval-capability ADR D32.
+	// Object storage is not configured; no capability can be minted and no proxy/fake URL is offered.
+	// Carried with FAILED_PRECONDITION.
+	ErrorCode_ERROR_CODE_SKILL_STORAGE_NOT_CONFIGURED ErrorCode = 8
+	// The requested skill_revision_id is not among the execution's frozen bindings. Carried with
+	// NOT_FOUND.
+	ErrorCode_ERROR_CODE_SKILL_REVISION_NOT_BOUND ErrorCode = 9
+	// The attempt is terminal (succeeded/failed/canceled/superseded) and must not mint a capability.
+	// Carried with FAILED_PRECONDITION.
+	ErrorCode_ERROR_CODE_SKILL_ATTEMPT_NOT_ELIGIBLE ErrorCode = 10
+	// The requested object does not exist in storage; the caller must fail closed. Carried with
+	// NOT_FOUND.
+	ErrorCode_ERROR_CODE_SKILL_OBJECT_NOT_AVAILABLE ErrorCode = 11
+	// Cloud could not produce a signed URL (provider error). Carried with UNAVAILABLE; retry after a
+	// short wait.
+	ErrorCode_ERROR_CODE_SKILL_SIGNING_FAILED ErrorCode = 12
+	// A frozen revision carries an object_locator Cloud cannot parse into a logical key. Carried with
+	// INTERNAL.
+	ErrorCode_ERROR_CODE_SKILL_INVALID_LOCATOR ErrorCode = 13
+	// The capability has expired; refresh or retry. Carried with FAILED_PRECONDITION.
+	ErrorCode_ERROR_CODE_SKILL_EXPIRED_OR_RETRY_REQUIRED ErrorCode = 14
+	// The (execution_id, attempt_id, skill_revision_id) authority chain does not verify. Carried with
+	// NOT_FOUND so it is indistinguishable from an unknown record.
+	ErrorCode_ERROR_CODE_SKILL_AUTHORIZATION_FAILED ErrorCode = 15
+	// Transient control-plane failure; safe to retry. Carried with UNAVAILABLE.
+	ErrorCode_ERROR_CODE_SKILL_TEMPORARY_CONTROL_PLANE_FAILURE ErrorCode = 16
 )
 
 // Enum value maps for ErrorCode.
 var (
 	ErrorCode_name = map[int32]string{
-		0: "ERROR_CODE_UNSPECIFIED",
-		1: "ERROR_CODE_CONFLICT",
-		2: "ERROR_CODE_INVALID_INPUT",
-		3: "ERROR_CODE_UNAVAILABLE",
-		4: "ERROR_CODE_NOT_FOUND",
-		5: "ERROR_CODE_STALE_CONTROLLER",
-		6: "ERROR_CODE_LEASE_HELD",
-		7: "ERROR_CODE_SERVICE_FORBIDDEN",
+		0:  "ERROR_CODE_UNSPECIFIED",
+		1:  "ERROR_CODE_CONFLICT",
+		2:  "ERROR_CODE_INVALID_INPUT",
+		3:  "ERROR_CODE_UNAVAILABLE",
+		4:  "ERROR_CODE_NOT_FOUND",
+		5:  "ERROR_CODE_STALE_CONTROLLER",
+		6:  "ERROR_CODE_LEASE_HELD",
+		7:  "ERROR_CODE_SERVICE_FORBIDDEN",
+		8:  "ERROR_CODE_SKILL_STORAGE_NOT_CONFIGURED",
+		9:  "ERROR_CODE_SKILL_REVISION_NOT_BOUND",
+		10: "ERROR_CODE_SKILL_ATTEMPT_NOT_ELIGIBLE",
+		11: "ERROR_CODE_SKILL_OBJECT_NOT_AVAILABLE",
+		12: "ERROR_CODE_SKILL_SIGNING_FAILED",
+		13: "ERROR_CODE_SKILL_INVALID_LOCATOR",
+		14: "ERROR_CODE_SKILL_EXPIRED_OR_RETRY_REQUIRED",
+		15: "ERROR_CODE_SKILL_AUTHORIZATION_FAILED",
+		16: "ERROR_CODE_SKILL_TEMPORARY_CONTROL_PLANE_FAILURE",
 	}
 	ErrorCode_value = map[string]int32{
-		"ERROR_CODE_UNSPECIFIED":       0,
-		"ERROR_CODE_CONFLICT":          1,
-		"ERROR_CODE_INVALID_INPUT":     2,
-		"ERROR_CODE_UNAVAILABLE":       3,
-		"ERROR_CODE_NOT_FOUND":         4,
-		"ERROR_CODE_STALE_CONTROLLER":  5,
-		"ERROR_CODE_LEASE_HELD":        6,
-		"ERROR_CODE_SERVICE_FORBIDDEN": 7,
+		"ERROR_CODE_UNSPECIFIED":                           0,
+		"ERROR_CODE_CONFLICT":                              1,
+		"ERROR_CODE_INVALID_INPUT":                         2,
+		"ERROR_CODE_UNAVAILABLE":                           3,
+		"ERROR_CODE_NOT_FOUND":                             4,
+		"ERROR_CODE_STALE_CONTROLLER":                      5,
+		"ERROR_CODE_LEASE_HELD":                            6,
+		"ERROR_CODE_SERVICE_FORBIDDEN":                     7,
+		"ERROR_CODE_SKILL_STORAGE_NOT_CONFIGURED":          8,
+		"ERROR_CODE_SKILL_REVISION_NOT_BOUND":              9,
+		"ERROR_CODE_SKILL_ATTEMPT_NOT_ELIGIBLE":            10,
+		"ERROR_CODE_SKILL_OBJECT_NOT_AVAILABLE":            11,
+		"ERROR_CODE_SKILL_SIGNING_FAILED":                  12,
+		"ERROR_CODE_SKILL_INVALID_LOCATOR":                 13,
+		"ERROR_CODE_SKILL_EXPIRED_OR_RETRY_REQUIRED":       14,
+		"ERROR_CODE_SKILL_AUTHORIZATION_FAILED":            15,
+		"ERROR_CODE_SKILL_TEMPORARY_CONTROL_PLANE_FAILURE": 16,
 	}
 )
 
@@ -155,7 +199,7 @@ const file_ora_cloud_internal_v1_errors_proto_rawDesc = "" +
 	"\n" +
 	"\"ora/cloud/internal/v1/errors.proto\x12\x15ora.cloud.internal.v1\"C\n" +
 	"\vErrorDetail\x124\n" +
-	"\x04code\x18\x01 \x01(\x0e2 .ora.cloud.internal.v1.ErrorCodeR\x04code*\xf2\x01\n" +
+	"\x04code\x18\x01 \x01(\x0e2 .ora.cloud.internal.v1.ErrorCodeR\x04code*\xfa\x04\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13ERROR_CODE_CONFLICT\x10\x01\x12\x1c\n" +
@@ -164,8 +208,17 @@ const file_ora_cloud_internal_v1_errors_proto_rawDesc = "" +
 	"\x14ERROR_CODE_NOT_FOUND\x10\x04\x12\x1f\n" +
 	"\x1bERROR_CODE_STALE_CONTROLLER\x10\x05\x12\x19\n" +
 	"\x15ERROR_CODE_LEASE_HELD\x10\x06\x12 \n" +
-	"\x1cERROR_CODE_SERVICE_FORBIDDEN\x10\aB\xdc\x01\n" +
-	"\x19com.ora.cloud.internal.v1B\vErrorsProtoP\x01Z;github.com/wanglongan587/cloud/internal/controlpb;controlpb\xa2\x02\x03OCI\xaa\x02\x15Ora.Cloud.Internal.V1\xca\x02\x15Ora\\Cloud\\Internal\\V1\xe2\x02!Ora\\Cloud\\Internal\\V1\\GPBMetadata\xea\x02\x18Ora::Cloud::Internal::V1b\x06proto3"
+	"\x1cERROR_CODE_SERVICE_FORBIDDEN\x10\a\x12+\n" +
+	"'ERROR_CODE_SKILL_STORAGE_NOT_CONFIGURED\x10\b\x12'\n" +
+	"#ERROR_CODE_SKILL_REVISION_NOT_BOUND\x10\t\x12)\n" +
+	"%ERROR_CODE_SKILL_ATTEMPT_NOT_ELIGIBLE\x10\n" +
+	"\x12)\n" +
+	"%ERROR_CODE_SKILL_OBJECT_NOT_AVAILABLE\x10\v\x12#\n" +
+	"\x1fERROR_CODE_SKILL_SIGNING_FAILED\x10\f\x12$\n" +
+	" ERROR_CODE_SKILL_INVALID_LOCATOR\x10\r\x12.\n" +
+	"*ERROR_CODE_SKILL_EXPIRED_OR_RETRY_REQUIRED\x10\x0e\x12)\n" +
+	"%ERROR_CODE_SKILL_AUTHORIZATION_FAILED\x10\x0f\x124\n" +
+	"0ERROR_CODE_SKILL_TEMPORARY_CONTROL_PLANE_FAILURE\x10\x10b\x06proto3"
 
 var (
 	file_ora_cloud_internal_v1_errors_proto_rawDescOnce sync.Once

@@ -13,6 +13,7 @@ import (
 
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -184,6 +185,131 @@ func (x *CloneSpec) GetBranch() string {
 	return ""
 }
 
+// One exact frozen SkillRevision reference carried in a dispatch descriptor (Execution Snapshot
+// ADR D4 / plan §17.1). It mirrors the immutable ExecutionSkillBinding content identity so the
+// Controller and Node never re-resolve mutable Skill state. The retrieval capability is a separate
+// later layer and deliberately not carried here.
+type SkillBundleRef struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	SkillRevisionId      string                 `protobuf:"bytes,1,opt,name=skill_revision_id,json=skillRevisionId,proto3" json:"skill_revision_id,omitempty"`
+	ContentDigest        string                 `protobuf:"bytes,2,opt,name=content_digest,json=contentDigest,proto3" json:"content_digest,omitempty"`
+	SizeBytes            int64                  `protobuf:"varint,3,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	PackageFormat        string                 `protobuf:"bytes,4,opt,name=package_format,json=packageFormat,proto3" json:"package_format,omitempty"`
+	PackageFormatVersion int32                  `protobuf:"varint,5,opt,name=package_format_version,json=packageFormatVersion,proto3" json:"package_format_version,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *SkillBundleRef) Reset() {
+	*x = SkillBundleRef{}
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SkillBundleRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SkillBundleRef) ProtoMessage() {}
+
+func (x *SkillBundleRef) ProtoReflect() protoreflect.Message {
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SkillBundleRef.ProtoReflect.Descriptor instead.
+func (*SkillBundleRef) Descriptor() ([]byte, []int) {
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SkillBundleRef) GetSkillRevisionId() string {
+	if x != nil {
+		return x.SkillRevisionId
+	}
+	return ""
+}
+
+func (x *SkillBundleRef) GetContentDigest() string {
+	if x != nil {
+		return x.ContentDigest
+	}
+	return ""
+}
+
+func (x *SkillBundleRef) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *SkillBundleRef) GetPackageFormat() string {
+	if x != nil {
+		return x.PackageFormat
+	}
+	return ""
+}
+
+func (x *SkillBundleRef) GetPackageFormatVersion() int32 {
+	if x != nil {
+		return x.PackageFormatVersion
+	}
+	return 0
+}
+
+// A skill-bearing execution kind: the exact frozen Skill revisions an Agent execution runs with.
+type SkillRunSpec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SkillBundles  []*SkillBundleRef      `protobuf:"bytes,1,rep,name=skill_bundles,json=skillBundles,proto3" json:"skill_bundles,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SkillRunSpec) Reset() {
+	*x = SkillRunSpec{}
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SkillRunSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SkillRunSpec) ProtoMessage() {}
+
+func (x *SkillRunSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SkillRunSpec.ProtoReflect.Descriptor instead.
+func (*SkillRunSpec) Descriptor() ([]byte, []int) {
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SkillRunSpec) GetSkillBundles() []*SkillBundleRef {
+	if x != nil {
+		return x.SkillBundles
+	}
+	return nil
+}
+
 // Full execution input as dispatched; extended with new oneof members as further execution kinds
 // join the loop.
 type ExecutionInput struct {
@@ -191,6 +317,7 @@ type ExecutionInput struct {
 	// Types that are valid to be assigned to Spec:
 	//
 	//	*ExecutionInput_Clone
+	//	*ExecutionInput_SkillRun
 	Spec          isExecutionInput_Spec `protobuf_oneof:"spec"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -198,7 +325,7 @@ type ExecutionInput struct {
 
 func (x *ExecutionInput) Reset() {
 	*x = ExecutionInput{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[2]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -210,7 +337,7 @@ func (x *ExecutionInput) String() string {
 func (*ExecutionInput) ProtoMessage() {}
 
 func (x *ExecutionInput) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[2]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -223,7 +350,7 @@ func (x *ExecutionInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionInput.ProtoReflect.Descriptor instead.
 func (*ExecutionInput) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{2}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ExecutionInput) GetSpec() isExecutionInput_Spec {
@@ -242,6 +369,15 @@ func (x *ExecutionInput) GetClone() *CloneSpec {
 	return nil
 }
 
+func (x *ExecutionInput) GetSkillRun() *SkillRunSpec {
+	if x != nil {
+		if x, ok := x.Spec.(*ExecutionInput_SkillRun); ok {
+			return x.SkillRun
+		}
+	}
+	return nil
+}
+
 type isExecutionInput_Spec interface {
 	isExecutionInput_Spec()
 }
@@ -250,7 +386,13 @@ type ExecutionInput_Clone struct {
 	Clone *CloneSpec `protobuf:"bytes,1,opt,name=clone,proto3,oneof"`
 }
 
+type ExecutionInput_SkillRun struct {
+	SkillRun *SkillRunSpec `protobuf:"bytes,2,opt,name=skill_run,json=skillRun,proto3,oneof"`
+}
+
 func (*ExecutionInput_Clone) isExecutionInput_Spec() {}
+
+func (*ExecutionInput_SkillRun) isExecutionInput_Spec() {}
 
 type CloneReady struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -262,7 +404,7 @@ type CloneReady struct {
 
 func (x *CloneReady) Reset() {
 	*x = CloneReady{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[3]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -274,7 +416,7 @@ func (x *CloneReady) String() string {
 func (*CloneReady) ProtoMessage() {}
 
 func (x *CloneReady) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[3]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -287,7 +429,7 @@ func (x *CloneReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloneReady.ProtoReflect.Descriptor instead.
 func (*CloneReady) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{3}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CloneReady) GetPath() string {
@@ -315,7 +457,7 @@ type CloneFailed struct {
 
 func (x *CloneFailed) Reset() {
 	*x = CloneFailed{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[4]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -327,7 +469,7 @@ func (x *CloneFailed) String() string {
 func (*CloneFailed) ProtoMessage() {}
 
 func (x *CloneFailed) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[4]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -340,7 +482,7 @@ func (x *CloneFailed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloneFailed.ProtoReflect.Descriptor instead.
 func (*CloneFailed) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{4}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *CloneFailed) GetReason() CloneFailureReason {
@@ -372,7 +514,7 @@ type ExecutionResult struct {
 
 func (x *ExecutionResult) Reset() {
 	*x = ExecutionResult{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[5]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -384,7 +526,7 @@ func (x *ExecutionResult) String() string {
 func (*ExecutionResult) ProtoMessage() {}
 
 func (x *ExecutionResult) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[5]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -397,7 +539,7 @@ func (x *ExecutionResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionResult.ProtoReflect.Descriptor instead.
 func (*ExecutionResult) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{5}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ExecutionResult) GetNode() *NodeIdentity {
@@ -459,7 +601,7 @@ type WorkItem struct {
 
 func (x *WorkItem) Reset() {
 	*x = WorkItem{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[6]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -471,7 +613,7 @@ func (x *WorkItem) String() string {
 func (*WorkItem) ProtoMessage() {}
 
 func (x *WorkItem) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[6]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -484,7 +626,7 @@ func (x *WorkItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkItem.ProtoReflect.Descriptor instead.
 func (*WorkItem) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{6}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *WorkItem) GetOperationId() string {
@@ -516,7 +658,7 @@ type ExecutionRecord struct {
 
 func (x *ExecutionRecord) Reset() {
 	*x = ExecutionRecord{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[7]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -528,7 +670,7 @@ func (x *ExecutionRecord) String() string {
 func (*ExecutionRecord) ProtoMessage() {}
 
 func (x *ExecutionRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[7]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -541,7 +683,7 @@ func (x *ExecutionRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionRecord.ProtoReflect.Descriptor instead.
 func (*ExecutionRecord) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{7}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ExecutionRecord) GetOperationId() string {
@@ -589,7 +731,7 @@ type ClaimWorkRequest struct {
 
 func (x *ClaimWorkRequest) Reset() {
 	*x = ClaimWorkRequest{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[8]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -601,7 +743,7 @@ func (x *ClaimWorkRequest) String() string {
 func (*ClaimWorkRequest) ProtoMessage() {}
 
 func (x *ClaimWorkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[8]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -614,7 +756,7 @@ func (x *ClaimWorkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimWorkRequest.ProtoReflect.Descriptor instead.
 func (*ClaimWorkRequest) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{8}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ClaimWorkRequest) GetSubmissionId() string {
@@ -640,7 +782,7 @@ type ClaimWorkResponse struct {
 
 func (x *ClaimWorkResponse) Reset() {
 	*x = ClaimWorkResponse{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[9]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -652,7 +794,7 @@ func (x *ClaimWorkResponse) String() string {
 func (*ClaimWorkResponse) ProtoMessage() {}
 
 func (x *ClaimWorkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[9]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -665,7 +807,7 @@ func (x *ClaimWorkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimWorkResponse.ProtoReflect.Descriptor instead.
 func (*ClaimWorkResponse) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{9}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ClaimWorkResponse) GetItem() *WorkItem {
@@ -689,7 +831,7 @@ type RecordDispatchRequest struct {
 
 func (x *RecordDispatchRequest) Reset() {
 	*x = RecordDispatchRequest{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[10]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -701,7 +843,7 @@ func (x *RecordDispatchRequest) String() string {
 func (*RecordDispatchRequest) ProtoMessage() {}
 
 func (x *RecordDispatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[10]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -714,7 +856,7 @@ func (x *RecordDispatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordDispatchRequest.ProtoReflect.Descriptor instead.
 func (*RecordDispatchRequest) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{10}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *RecordDispatchRequest) GetSubmissionId() string {
@@ -768,7 +910,7 @@ type RecordDispatchResponse struct {
 
 func (x *RecordDispatchResponse) Reset() {
 	*x = RecordDispatchResponse{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[11]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -780,7 +922,7 @@ func (x *RecordDispatchResponse) String() string {
 func (*RecordDispatchResponse) ProtoMessage() {}
 
 func (x *RecordDispatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[11]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -793,7 +935,7 @@ func (x *RecordDispatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordDispatchResponse.ProtoReflect.Descriptor instead.
 func (*RecordDispatchResponse) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{11}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *RecordDispatchResponse) GetRecord() *ExecutionRecord {
@@ -822,7 +964,7 @@ type TakeOverNodeEventRequest struct {
 
 func (x *TakeOverNodeEventRequest) Reset() {
 	*x = TakeOverNodeEventRequest{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[12]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -834,7 +976,7 @@ func (x *TakeOverNodeEventRequest) String() string {
 func (*TakeOverNodeEventRequest) ProtoMessage() {}
 
 func (x *TakeOverNodeEventRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[12]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -847,7 +989,7 @@ func (x *TakeOverNodeEventRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TakeOverNodeEventRequest.ProtoReflect.Descriptor instead.
 func (*TakeOverNodeEventRequest) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{12}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *TakeOverNodeEventRequest) GetSubmissionId() string {
@@ -908,7 +1050,7 @@ type TakeOverNodeEventResponse struct {
 
 func (x *TakeOverNodeEventResponse) Reset() {
 	*x = TakeOverNodeEventResponse{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[13]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -920,7 +1062,7 @@ func (x *TakeOverNodeEventResponse) String() string {
 func (*TakeOverNodeEventResponse) ProtoMessage() {}
 
 func (x *TakeOverNodeEventResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[13]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -933,7 +1075,7 @@ func (x *TakeOverNodeEventResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TakeOverNodeEventResponse.ProtoReflect.Descriptor instead.
 func (*TakeOverNodeEventResponse) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{13}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TakeOverNodeEventResponse) GetRecord() *ExecutionRecord {
@@ -956,7 +1098,7 @@ type RecordQueriedResultRequest struct {
 
 func (x *RecordQueriedResultRequest) Reset() {
 	*x = RecordQueriedResultRequest{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[14]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -968,7 +1110,7 @@ func (x *RecordQueriedResultRequest) String() string {
 func (*RecordQueriedResultRequest) ProtoMessage() {}
 
 func (x *RecordQueriedResultRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[14]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -981,7 +1123,7 @@ func (x *RecordQueriedResultRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordQueriedResultRequest.ProtoReflect.Descriptor instead.
 func (*RecordQueriedResultRequest) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{14}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RecordQueriedResultRequest) GetSubmissionId() string {
@@ -1028,7 +1170,7 @@ type RecordQueriedResultResponse struct {
 
 func (x *RecordQueriedResultResponse) Reset() {
 	*x = RecordQueriedResultResponse{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[15]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1040,7 +1182,7 @@ func (x *RecordQueriedResultResponse) String() string {
 func (*RecordQueriedResultResponse) ProtoMessage() {}
 
 func (x *RecordQueriedResultResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[15]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1053,7 +1195,7 @@ func (x *RecordQueriedResultResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordQueriedResultResponse.ProtoReflect.Descriptor instead.
 func (*RecordQueriedResultResponse) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{15}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RecordQueriedResultResponse) GetRecord() *ExecutionRecord {
@@ -1072,7 +1214,7 @@ type GetDispatchRequest struct {
 
 func (x *GetDispatchRequest) Reset() {
 	*x = GetDispatchRequest{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[16]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1084,7 +1226,7 @@ func (x *GetDispatchRequest) String() string {
 func (*GetDispatchRequest) ProtoMessage() {}
 
 func (x *GetDispatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[16]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1097,7 +1239,7 @@ func (x *GetDispatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDispatchRequest.ProtoReflect.Descriptor instead.
 func (*GetDispatchRequest) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{16}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetDispatchRequest) GetExecutionId() string {
@@ -1116,7 +1258,7 @@ type GetDispatchResponse struct {
 
 func (x *GetDispatchResponse) Reset() {
 	*x = GetDispatchResponse{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[17]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1128,7 +1270,7 @@ func (x *GetDispatchResponse) String() string {
 func (*GetDispatchResponse) ProtoMessage() {}
 
 func (x *GetDispatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[17]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1141,7 +1283,7 @@ func (x *GetDispatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDispatchResponse.ProtoReflect.Descriptor instead.
 func (*GetDispatchResponse) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{17}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GetDispatchResponse) GetRecord() *ExecutionRecord {
@@ -1161,7 +1303,7 @@ type ListPendingDispatchesRequest struct {
 
 func (x *ListPendingDispatchesRequest) Reset() {
 	*x = ListPendingDispatchesRequest{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[18]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1173,7 +1315,7 @@ func (x *ListPendingDispatchesRequest) String() string {
 func (*ListPendingDispatchesRequest) ProtoMessage() {}
 
 func (x *ListPendingDispatchesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[18]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1186,7 +1328,7 @@ func (x *ListPendingDispatchesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingDispatchesRequest.ProtoReflect.Descriptor instead.
 func (*ListPendingDispatchesRequest) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{18}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ListPendingDispatchesRequest) GetNodeId() string {
@@ -1205,7 +1347,7 @@ type ListPendingDispatchesResponse struct {
 
 func (x *ListPendingDispatchesResponse) Reset() {
 	*x = ListPendingDispatchesResponse{}
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[19]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1217,7 +1359,7 @@ func (x *ListPendingDispatchesResponse) String() string {
 func (*ListPendingDispatchesResponse) ProtoMessage() {}
 
 func (x *ListPendingDispatchesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[19]
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1230,7 +1372,7 @@ func (x *ListPendingDispatchesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingDispatchesResponse.ProtoReflect.Descriptor instead.
 func (*ListPendingDispatchesResponse) Descriptor() ([]byte, []int) {
-	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{19}
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ListPendingDispatchesResponse) GetRecords() []*ExecutionRecord {
@@ -1240,11 +1382,190 @@ func (x *ListPendingDispatchesResponse) GetRecords() []*ExecutionRecord {
 	return nil
 }
 
+// MintSkillRetrievalRequest asks Cloud to mint retrieval capabilities for one or more frozen skill
+// revisions. The caller supplies only durable identities (execution_id, attempt_id,
+// skill_revision_ids) — never a locator, bucket, key, or workspace ownership claim (ADR D9/D12/D17).
+type MintSkillRetrievalRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ExecutionId      string                 `protobuf:"bytes,1,opt,name=execution_id,json=executionId,proto3" json:"execution_id,omitempty"`
+	AttemptId        string                 `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	SkillRevisionIds []string               `protobuf:"bytes,3,rep,name=skill_revision_ids,json=skillRevisionIds,proto3" json:"skill_revision_ids,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *MintSkillRetrievalRequest) Reset() {
+	*x = MintSkillRetrievalRequest{}
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MintSkillRetrievalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MintSkillRetrievalRequest) ProtoMessage() {}
+
+func (x *MintSkillRetrievalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MintSkillRetrievalRequest.ProtoReflect.Descriptor instead.
+func (*MintSkillRetrievalRequest) Descriptor() ([]byte, []int) {
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *MintSkillRetrievalRequest) GetExecutionId() string {
+	if x != nil {
+		return x.ExecutionId
+	}
+	return ""
+}
+
+func (x *MintSkillRetrievalRequest) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
+func (x *MintSkillRetrievalRequest) GetSkillRevisionIds() []string {
+	if x != nil {
+		return x.SkillRevisionIds
+	}
+	return nil
+}
+
+// SkillRetrievalCapability is one minted short-lived exact-object GET credential (ADR D3/D5). `url`
+// is a bearer credential: transient delivery state, never persisted or logged. `method` is fixed to
+// "GET".
+type SkillRetrievalCapability struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	SkillRevisionId string                 `protobuf:"bytes,1,opt,name=skill_revision_id,json=skillRevisionId,proto3" json:"skill_revision_id,omitempty"`
+	Method          string                 `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
+	Url             string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	// expires_at is the authoritative expiry taken from the actual signing validity (ADR D24).
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SkillRetrievalCapability) Reset() {
+	*x = SkillRetrievalCapability{}
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SkillRetrievalCapability) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SkillRetrievalCapability) ProtoMessage() {}
+
+func (x *SkillRetrievalCapability) ProtoReflect() protoreflect.Message {
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SkillRetrievalCapability.ProtoReflect.Descriptor instead.
+func (*SkillRetrievalCapability) Descriptor() ([]byte, []int) {
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *SkillRetrievalCapability) GetSkillRevisionId() string {
+	if x != nil {
+		return x.SkillRevisionId
+	}
+	return ""
+}
+
+func (x *SkillRetrievalCapability) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *SkillRetrievalCapability) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *SkillRetrievalCapability) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type MintSkillRetrievalResponse struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Capabilities  []*SkillRetrievalCapability `protobuf:"bytes,1,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MintSkillRetrievalResponse) Reset() {
+	*x = MintSkillRetrievalResponse{}
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MintSkillRetrievalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MintSkillRetrievalResponse) ProtoMessage() {}
+
+func (x *MintSkillRetrievalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ora_cloud_internal_v1_executions_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MintSkillRetrievalResponse.ProtoReflect.Descriptor instead.
+func (*MintSkillRetrievalResponse) Descriptor() ([]byte, []int) {
+	return file_ora_cloud_internal_v1_executions_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *MintSkillRetrievalResponse) GetCapabilities() []*SkillRetrievalCapability {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
 var File_ora_cloud_internal_v1_executions_proto protoreflect.FileDescriptor
 
 const file_ora_cloud_internal_v1_executions_proto_rawDesc = "" +
 	"\n" +
-	"&ora/cloud/internal/v1/executions.proto\x12\x15ora.cloud.internal.v1\"W\n" +
+	"&ora/cloud/internal/v1/executions.proto\x12\x15ora.cloud.internal.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"W\n" +
 	"\fNodeIdentity\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12.\n" +
 	"\x13node_incarnation_id\x18\x02 \x01(\tR\x11nodeIncarnationId\"C\n" +
@@ -1252,9 +1573,19 @@ const file_ora_cloud_internal_v1_executions_proto_rawDesc = "" +
 	"\n" +
 	"repository\x18\x01 \x01(\tR\n" +
 	"repository\x12\x16\n" +
-	"\x06branch\x18\x02 \x01(\tR\x06branch\"R\n" +
+	"\x06branch\x18\x02 \x01(\tR\x06branch\"\xdf\x01\n" +
+	"\x0eSkillBundleRef\x12*\n" +
+	"\x11skill_revision_id\x18\x01 \x01(\tR\x0fskillRevisionId\x12%\n" +
+	"\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x03 \x01(\x03R\tsizeBytes\x12%\n" +
+	"\x0epackage_format\x18\x04 \x01(\tR\rpackageFormat\x124\n" +
+	"\x16package_format_version\x18\x05 \x01(\x05R\x14packageFormatVersion\"Z\n" +
+	"\fSkillRunSpec\x12J\n" +
+	"\rskill_bundles\x18\x01 \x03(\v2%.ora.cloud.internal.v1.SkillBundleRefR\fskillBundles\"\x96\x01\n" +
 	"\x0eExecutionInput\x128\n" +
-	"\x05clone\x18\x01 \x01(\v2 .ora.cloud.internal.v1.CloneSpecH\x00R\x05cloneB\x06\n" +
+	"\x05clone\x18\x01 \x01(\v2 .ora.cloud.internal.v1.CloneSpecH\x00R\x05clone\x12B\n" +
+	"\tskill_run\x18\x02 \x01(\v2#.ora.cloud.internal.v1.SkillRunSpecH\x00R\bskillRunB\x06\n" +
 	"\x04spec\"8\n" +
 	"\n" +
 	"CloneReady\x12\x12\n" +
@@ -1320,21 +1651,34 @@ const file_ora_cloud_internal_v1_executions_proto_rawDesc = "" +
 	"\x1cListPendingDispatchesRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"a\n" +
 	"\x1dListPendingDispatchesResponse\x12@\n" +
-	"\arecords\x18\x01 \x03(\v2&.ora.cloud.internal.v1.ExecutionRecordR\arecords*\xec\x01\n" +
+	"\arecords\x18\x01 \x03(\v2&.ora.cloud.internal.v1.ExecutionRecordR\arecords\"\x8b\x01\n" +
+	"\x19MintSkillRetrievalRequest\x12!\n" +
+	"\fexecution_id\x18\x01 \x01(\tR\vexecutionId\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x02 \x01(\tR\tattemptId\x12,\n" +
+	"\x12skill_revision_ids\x18\x03 \x03(\tR\x10skillRevisionIds\"\xab\x01\n" +
+	"\x18SkillRetrievalCapability\x12*\n" +
+	"\x11skill_revision_id\x18\x01 \x01(\tR\x0fskillRevisionId\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x10\n" +
+	"\x03url\x18\x03 \x01(\tR\x03url\x129\n" +
+	"\n" +
+	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"q\n" +
+	"\x1aMintSkillRetrievalResponse\x12S\n" +
+	"\fcapabilities\x18\x01 \x03(\v2/.ora.cloud.internal.v1.SkillRetrievalCapabilityR\fcapabilities*\xec\x01\n" +
 	"\x12CloneFailureReason\x12$\n" +
 	" CLONE_FAILURE_REASON_UNSPECIFIED\x10\x00\x12+\n" +
 	"'CLONE_FAILURE_REASON_SOURCE_UNAVAILABLE\x10\x01\x12)\n" +
 	"%CLONE_FAILURE_REASON_BRANCH_NOT_FOUND\x10\x02\x12-\n" +
 	")CLONE_FAILURE_REASON_DESTINATION_CONFLICT\x10\x03\x12)\n" +
-	"%CLONE_FAILURE_REASON_OPERATION_FAILED\x10\x042\xc2\x05\n" +
+	"%CLONE_FAILURE_REASON_OPERATION_FAILED\x10\x042\xbd\x06\n" +
 	"\x10ExecutionService\x12^\n" +
 	"\tClaimWork\x12'.ora.cloud.internal.v1.ClaimWorkRequest\x1a(.ora.cloud.internal.v1.ClaimWorkResponse\x12m\n" +
 	"\x0eRecordDispatch\x12,.ora.cloud.internal.v1.RecordDispatchRequest\x1a-.ora.cloud.internal.v1.RecordDispatchResponse\x12v\n" +
 	"\x11TakeOverNodeEvent\x12/.ora.cloud.internal.v1.TakeOverNodeEventRequest\x1a0.ora.cloud.internal.v1.TakeOverNodeEventResponse\x12|\n" +
 	"\x13RecordQueriedResult\x121.ora.cloud.internal.v1.RecordQueriedResultRequest\x1a2.ora.cloud.internal.v1.RecordQueriedResultResponse\x12d\n" +
 	"\vGetDispatch\x12).ora.cloud.internal.v1.GetDispatchRequest\x1a*.ora.cloud.internal.v1.GetDispatchResponse\x12\x82\x01\n" +
-	"\x15ListPendingDispatches\x123.ora.cloud.internal.v1.ListPendingDispatchesRequest\x1a4.ora.cloud.internal.v1.ListPendingDispatchesResponseB\xe0\x01\n" +
-	"\x19com.ora.cloud.internal.v1B\x0fExecutionsProtoP\x01Z;github.com/wanglongan587/cloud/internal/controlpb;controlpb\xa2\x02\x03OCI\xaa\x02\x15Ora.Cloud.Internal.V1\xca\x02\x15Ora\\Cloud\\Internal\\V1\xe2\x02!Ora\\Cloud\\Internal\\V1\\GPBMetadata\xea\x02\x18Ora::Cloud::Internal::V1b\x06proto3"
+	"\x15ListPendingDispatches\x123.ora.cloud.internal.v1.ListPendingDispatchesRequest\x1a4.ora.cloud.internal.v1.ListPendingDispatchesResponse\x12y\n" +
+	"\x12MintSkillRetrieval\x120.ora.cloud.internal.v1.MintSkillRetrievalRequest\x1a1.ora.cloud.internal.v1.MintSkillRetrievalResponseb\x06proto3"
 
 var (
 	file_ora_cloud_internal_v1_executions_proto_rawDescOnce sync.Once
@@ -1349,65 +1693,77 @@ func file_ora_cloud_internal_v1_executions_proto_rawDescGZIP() []byte {
 }
 
 var file_ora_cloud_internal_v1_executions_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_ora_cloud_internal_v1_executions_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_ora_cloud_internal_v1_executions_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_ora_cloud_internal_v1_executions_proto_goTypes = []any{
 	(CloneFailureReason)(0),               // 0: ora.cloud.internal.v1.CloneFailureReason
 	(*NodeIdentity)(nil),                  // 1: ora.cloud.internal.v1.NodeIdentity
 	(*CloneSpec)(nil),                     // 2: ora.cloud.internal.v1.CloneSpec
-	(*ExecutionInput)(nil),                // 3: ora.cloud.internal.v1.ExecutionInput
-	(*CloneReady)(nil),                    // 4: ora.cloud.internal.v1.CloneReady
-	(*CloneFailed)(nil),                   // 5: ora.cloud.internal.v1.CloneFailed
-	(*ExecutionResult)(nil),               // 6: ora.cloud.internal.v1.ExecutionResult
-	(*WorkItem)(nil),                      // 7: ora.cloud.internal.v1.WorkItem
-	(*ExecutionRecord)(nil),               // 8: ora.cloud.internal.v1.ExecutionRecord
-	(*ClaimWorkRequest)(nil),              // 9: ora.cloud.internal.v1.ClaimWorkRequest
-	(*ClaimWorkResponse)(nil),             // 10: ora.cloud.internal.v1.ClaimWorkResponse
-	(*RecordDispatchRequest)(nil),         // 11: ora.cloud.internal.v1.RecordDispatchRequest
-	(*RecordDispatchResponse)(nil),        // 12: ora.cloud.internal.v1.RecordDispatchResponse
-	(*TakeOverNodeEventRequest)(nil),      // 13: ora.cloud.internal.v1.TakeOverNodeEventRequest
-	(*TakeOverNodeEventResponse)(nil),     // 14: ora.cloud.internal.v1.TakeOverNodeEventResponse
-	(*RecordQueriedResultRequest)(nil),    // 15: ora.cloud.internal.v1.RecordQueriedResultRequest
-	(*RecordQueriedResultResponse)(nil),   // 16: ora.cloud.internal.v1.RecordQueriedResultResponse
-	(*GetDispatchRequest)(nil),            // 17: ora.cloud.internal.v1.GetDispatchRequest
-	(*GetDispatchResponse)(nil),           // 18: ora.cloud.internal.v1.GetDispatchResponse
-	(*ListPendingDispatchesRequest)(nil),  // 19: ora.cloud.internal.v1.ListPendingDispatchesRequest
-	(*ListPendingDispatchesResponse)(nil), // 20: ora.cloud.internal.v1.ListPendingDispatchesResponse
+	(*SkillBundleRef)(nil),                // 3: ora.cloud.internal.v1.SkillBundleRef
+	(*SkillRunSpec)(nil),                  // 4: ora.cloud.internal.v1.SkillRunSpec
+	(*ExecutionInput)(nil),                // 5: ora.cloud.internal.v1.ExecutionInput
+	(*CloneReady)(nil),                    // 6: ora.cloud.internal.v1.CloneReady
+	(*CloneFailed)(nil),                   // 7: ora.cloud.internal.v1.CloneFailed
+	(*ExecutionResult)(nil),               // 8: ora.cloud.internal.v1.ExecutionResult
+	(*WorkItem)(nil),                      // 9: ora.cloud.internal.v1.WorkItem
+	(*ExecutionRecord)(nil),               // 10: ora.cloud.internal.v1.ExecutionRecord
+	(*ClaimWorkRequest)(nil),              // 11: ora.cloud.internal.v1.ClaimWorkRequest
+	(*ClaimWorkResponse)(nil),             // 12: ora.cloud.internal.v1.ClaimWorkResponse
+	(*RecordDispatchRequest)(nil),         // 13: ora.cloud.internal.v1.RecordDispatchRequest
+	(*RecordDispatchResponse)(nil),        // 14: ora.cloud.internal.v1.RecordDispatchResponse
+	(*TakeOverNodeEventRequest)(nil),      // 15: ora.cloud.internal.v1.TakeOverNodeEventRequest
+	(*TakeOverNodeEventResponse)(nil),     // 16: ora.cloud.internal.v1.TakeOverNodeEventResponse
+	(*RecordQueriedResultRequest)(nil),    // 17: ora.cloud.internal.v1.RecordQueriedResultRequest
+	(*RecordQueriedResultResponse)(nil),   // 18: ora.cloud.internal.v1.RecordQueriedResultResponse
+	(*GetDispatchRequest)(nil),            // 19: ora.cloud.internal.v1.GetDispatchRequest
+	(*GetDispatchResponse)(nil),           // 20: ora.cloud.internal.v1.GetDispatchResponse
+	(*ListPendingDispatchesRequest)(nil),  // 21: ora.cloud.internal.v1.ListPendingDispatchesRequest
+	(*ListPendingDispatchesResponse)(nil), // 22: ora.cloud.internal.v1.ListPendingDispatchesResponse
+	(*MintSkillRetrievalRequest)(nil),     // 23: ora.cloud.internal.v1.MintSkillRetrievalRequest
+	(*SkillRetrievalCapability)(nil),      // 24: ora.cloud.internal.v1.SkillRetrievalCapability
+	(*MintSkillRetrievalResponse)(nil),    // 25: ora.cloud.internal.v1.MintSkillRetrievalResponse
+	(*timestamppb.Timestamp)(nil),         // 26: google.protobuf.Timestamp
 }
 var file_ora_cloud_internal_v1_executions_proto_depIdxs = []int32{
-	2,  // 0: ora.cloud.internal.v1.ExecutionInput.clone:type_name -> ora.cloud.internal.v1.CloneSpec
-	0,  // 1: ora.cloud.internal.v1.CloneFailed.reason:type_name -> ora.cloud.internal.v1.CloneFailureReason
-	1,  // 2: ora.cloud.internal.v1.ExecutionResult.node:type_name -> ora.cloud.internal.v1.NodeIdentity
-	4,  // 3: ora.cloud.internal.v1.ExecutionResult.clone_ready:type_name -> ora.cloud.internal.v1.CloneReady
-	5,  // 4: ora.cloud.internal.v1.ExecutionResult.clone_failed:type_name -> ora.cloud.internal.v1.CloneFailed
-	3,  // 5: ora.cloud.internal.v1.WorkItem.input:type_name -> ora.cloud.internal.v1.ExecutionInput
-	3,  // 6: ora.cloud.internal.v1.ExecutionRecord.input:type_name -> ora.cloud.internal.v1.ExecutionInput
-	6,  // 7: ora.cloud.internal.v1.ExecutionRecord.result:type_name -> ora.cloud.internal.v1.ExecutionResult
-	7,  // 8: ora.cloud.internal.v1.ClaimWorkResponse.item:type_name -> ora.cloud.internal.v1.WorkItem
-	3,  // 9: ora.cloud.internal.v1.RecordDispatchRequest.input:type_name -> ora.cloud.internal.v1.ExecutionInput
-	8,  // 10: ora.cloud.internal.v1.RecordDispatchResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
-	6,  // 11: ora.cloud.internal.v1.TakeOverNodeEventRequest.result:type_name -> ora.cloud.internal.v1.ExecutionResult
-	8,  // 12: ora.cloud.internal.v1.TakeOverNodeEventResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
-	6,  // 13: ora.cloud.internal.v1.RecordQueriedResultRequest.result:type_name -> ora.cloud.internal.v1.ExecutionResult
-	8,  // 14: ora.cloud.internal.v1.RecordQueriedResultResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
-	8,  // 15: ora.cloud.internal.v1.GetDispatchResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
-	8,  // 16: ora.cloud.internal.v1.ListPendingDispatchesResponse.records:type_name -> ora.cloud.internal.v1.ExecutionRecord
-	9,  // 17: ora.cloud.internal.v1.ExecutionService.ClaimWork:input_type -> ora.cloud.internal.v1.ClaimWorkRequest
-	11, // 18: ora.cloud.internal.v1.ExecutionService.RecordDispatch:input_type -> ora.cloud.internal.v1.RecordDispatchRequest
-	13, // 19: ora.cloud.internal.v1.ExecutionService.TakeOverNodeEvent:input_type -> ora.cloud.internal.v1.TakeOverNodeEventRequest
-	15, // 20: ora.cloud.internal.v1.ExecutionService.RecordQueriedResult:input_type -> ora.cloud.internal.v1.RecordQueriedResultRequest
-	17, // 21: ora.cloud.internal.v1.ExecutionService.GetDispatch:input_type -> ora.cloud.internal.v1.GetDispatchRequest
-	19, // 22: ora.cloud.internal.v1.ExecutionService.ListPendingDispatches:input_type -> ora.cloud.internal.v1.ListPendingDispatchesRequest
-	10, // 23: ora.cloud.internal.v1.ExecutionService.ClaimWork:output_type -> ora.cloud.internal.v1.ClaimWorkResponse
-	12, // 24: ora.cloud.internal.v1.ExecutionService.RecordDispatch:output_type -> ora.cloud.internal.v1.RecordDispatchResponse
-	14, // 25: ora.cloud.internal.v1.ExecutionService.TakeOverNodeEvent:output_type -> ora.cloud.internal.v1.TakeOverNodeEventResponse
-	16, // 26: ora.cloud.internal.v1.ExecutionService.RecordQueriedResult:output_type -> ora.cloud.internal.v1.RecordQueriedResultResponse
-	18, // 27: ora.cloud.internal.v1.ExecutionService.GetDispatch:output_type -> ora.cloud.internal.v1.GetDispatchResponse
-	20, // 28: ora.cloud.internal.v1.ExecutionService.ListPendingDispatches:output_type -> ora.cloud.internal.v1.ListPendingDispatchesResponse
-	23, // [23:29] is the sub-list for method output_type
-	17, // [17:23] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	3,  // 0: ora.cloud.internal.v1.SkillRunSpec.skill_bundles:type_name -> ora.cloud.internal.v1.SkillBundleRef
+	2,  // 1: ora.cloud.internal.v1.ExecutionInput.clone:type_name -> ora.cloud.internal.v1.CloneSpec
+	4,  // 2: ora.cloud.internal.v1.ExecutionInput.skill_run:type_name -> ora.cloud.internal.v1.SkillRunSpec
+	0,  // 3: ora.cloud.internal.v1.CloneFailed.reason:type_name -> ora.cloud.internal.v1.CloneFailureReason
+	1,  // 4: ora.cloud.internal.v1.ExecutionResult.node:type_name -> ora.cloud.internal.v1.NodeIdentity
+	6,  // 5: ora.cloud.internal.v1.ExecutionResult.clone_ready:type_name -> ora.cloud.internal.v1.CloneReady
+	7,  // 6: ora.cloud.internal.v1.ExecutionResult.clone_failed:type_name -> ora.cloud.internal.v1.CloneFailed
+	5,  // 7: ora.cloud.internal.v1.WorkItem.input:type_name -> ora.cloud.internal.v1.ExecutionInput
+	5,  // 8: ora.cloud.internal.v1.ExecutionRecord.input:type_name -> ora.cloud.internal.v1.ExecutionInput
+	8,  // 9: ora.cloud.internal.v1.ExecutionRecord.result:type_name -> ora.cloud.internal.v1.ExecutionResult
+	9,  // 10: ora.cloud.internal.v1.ClaimWorkResponse.item:type_name -> ora.cloud.internal.v1.WorkItem
+	5,  // 11: ora.cloud.internal.v1.RecordDispatchRequest.input:type_name -> ora.cloud.internal.v1.ExecutionInput
+	10, // 12: ora.cloud.internal.v1.RecordDispatchResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
+	8,  // 13: ora.cloud.internal.v1.TakeOverNodeEventRequest.result:type_name -> ora.cloud.internal.v1.ExecutionResult
+	10, // 14: ora.cloud.internal.v1.TakeOverNodeEventResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
+	8,  // 15: ora.cloud.internal.v1.RecordQueriedResultRequest.result:type_name -> ora.cloud.internal.v1.ExecutionResult
+	10, // 16: ora.cloud.internal.v1.RecordQueriedResultResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
+	10, // 17: ora.cloud.internal.v1.GetDispatchResponse.record:type_name -> ora.cloud.internal.v1.ExecutionRecord
+	10, // 18: ora.cloud.internal.v1.ListPendingDispatchesResponse.records:type_name -> ora.cloud.internal.v1.ExecutionRecord
+	26, // 19: ora.cloud.internal.v1.SkillRetrievalCapability.expires_at:type_name -> google.protobuf.Timestamp
+	24, // 20: ora.cloud.internal.v1.MintSkillRetrievalResponse.capabilities:type_name -> ora.cloud.internal.v1.SkillRetrievalCapability
+	11, // 21: ora.cloud.internal.v1.ExecutionService.ClaimWork:input_type -> ora.cloud.internal.v1.ClaimWorkRequest
+	13, // 22: ora.cloud.internal.v1.ExecutionService.RecordDispatch:input_type -> ora.cloud.internal.v1.RecordDispatchRequest
+	15, // 23: ora.cloud.internal.v1.ExecutionService.TakeOverNodeEvent:input_type -> ora.cloud.internal.v1.TakeOverNodeEventRequest
+	17, // 24: ora.cloud.internal.v1.ExecutionService.RecordQueriedResult:input_type -> ora.cloud.internal.v1.RecordQueriedResultRequest
+	19, // 25: ora.cloud.internal.v1.ExecutionService.GetDispatch:input_type -> ora.cloud.internal.v1.GetDispatchRequest
+	21, // 26: ora.cloud.internal.v1.ExecutionService.ListPendingDispatches:input_type -> ora.cloud.internal.v1.ListPendingDispatchesRequest
+	23, // 27: ora.cloud.internal.v1.ExecutionService.MintSkillRetrieval:input_type -> ora.cloud.internal.v1.MintSkillRetrievalRequest
+	12, // 28: ora.cloud.internal.v1.ExecutionService.ClaimWork:output_type -> ora.cloud.internal.v1.ClaimWorkResponse
+	14, // 29: ora.cloud.internal.v1.ExecutionService.RecordDispatch:output_type -> ora.cloud.internal.v1.RecordDispatchResponse
+	16, // 30: ora.cloud.internal.v1.ExecutionService.TakeOverNodeEvent:output_type -> ora.cloud.internal.v1.TakeOverNodeEventResponse
+	18, // 31: ora.cloud.internal.v1.ExecutionService.RecordQueriedResult:output_type -> ora.cloud.internal.v1.RecordQueriedResultResponse
+	20, // 32: ora.cloud.internal.v1.ExecutionService.GetDispatch:output_type -> ora.cloud.internal.v1.GetDispatchResponse
+	22, // 33: ora.cloud.internal.v1.ExecutionService.ListPendingDispatches:output_type -> ora.cloud.internal.v1.ListPendingDispatchesResponse
+	25, // 34: ora.cloud.internal.v1.ExecutionService.MintSkillRetrieval:output_type -> ora.cloud.internal.v1.MintSkillRetrievalResponse
+	28, // [28:35] is the sub-list for method output_type
+	21, // [21:28] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_ora_cloud_internal_v1_executions_proto_init() }
@@ -1415,23 +1771,24 @@ func file_ora_cloud_internal_v1_executions_proto_init() {
 	if File_ora_cloud_internal_v1_executions_proto != nil {
 		return
 	}
-	file_ora_cloud_internal_v1_executions_proto_msgTypes[2].OneofWrappers = []any{
+	file_ora_cloud_internal_v1_executions_proto_msgTypes[4].OneofWrappers = []any{
 		(*ExecutionInput_Clone)(nil),
+		(*ExecutionInput_SkillRun)(nil),
 	}
-	file_ora_cloud_internal_v1_executions_proto_msgTypes[4].OneofWrappers = []any{}
-	file_ora_cloud_internal_v1_executions_proto_msgTypes[5].OneofWrappers = []any{
+	file_ora_cloud_internal_v1_executions_proto_msgTypes[6].OneofWrappers = []any{}
+	file_ora_cloud_internal_v1_executions_proto_msgTypes[7].OneofWrappers = []any{
 		(*ExecutionResult_CloneReady)(nil),
 		(*ExecutionResult_CloneFailed)(nil),
 	}
-	file_ora_cloud_internal_v1_executions_proto_msgTypes[7].OneofWrappers = []any{}
 	file_ora_cloud_internal_v1_executions_proto_msgTypes[9].OneofWrappers = []any{}
+	file_ora_cloud_internal_v1_executions_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ora_cloud_internal_v1_executions_proto_rawDesc), len(file_ora_cloud_internal_v1_executions_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   20,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

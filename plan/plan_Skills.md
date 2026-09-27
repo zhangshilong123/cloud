@@ -627,6 +627,11 @@ Retry
 
 Do not conflate Retry and Run Again.
 
+The first Attempt is created atomically with the Execution in the same admission transaction, in a durable `eligible`
+state with empty node/lease/epoch/dispatch metadata. An admitted Execution always has its complete Skill snapshot and
+its first Attempt together — there is no "admitted but not yet attempted" state. The Controller only claims/dispatches
+an existing Attempt; retry creates a new Attempt (`ordinal` increments) over the same frozen input.
+
 Transient retrieval failures MAY retry inside the same Attempt. Once an Attempt is failed, V1 MUST NOT resume that same failed Attempt. A new Attempt may be created according to retry policy.
 
 Failure taxonomy must distinguish permanent Execution/input failures, transient retrieval failures, and Node-local/environment failures.
@@ -1695,34 +1700,58 @@ rows; the selection helper below excludes soft-deleted Skills and disabled bindi
       resolves **no** revision/digest (ADR D8/D10/D13; not a snapshot).
 - [x] **No execution surface**: no `Execution`/`Attempt`/`ExecutionSkillBinding`, no capability/signed-URL/object
       locator, no caller-supplied `skill_ids` anywhere in the Agent tables or API (ADR D8/D13/D14).
-- [ ] RetrievalCapability / Execution snapshot / Node delivery / Agent UI remain NOT implemented (later phases).
+- [ ] RetrievalCapability / Node delivery / Agent UI remain NOT implemented (later phases; the Execution snapshot
+      was delivered by Phase 5).
 
-Step 5B remains BLOCKED: the Execution snapshot (Phase 5) now has its durable `AgentSkillBinding` selection
-authority implemented above, but is itself not yet implemented.
+Step 5B (Execution snapshot, Phase 5) is now landed: with its durable `AgentSkillBinding` selection authority in
+place, the Execution/Attempt/ExecutionSkillBinding snapshot is implemented (see Phase 5 below).
 
 ## Phase 5 — Execution snapshot
 
-> Status: **BLOCKED** — depends on the durable `AgentSkillBinding` (Phase 4A contract frozen; Phase 4B
-> implementation now landed — the `enabledAgentSkillBindings` read seam is the selection authority). Contract is
-> `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md` (status `proposed`), revised to consume durable
-> `AgentSkillBinding` only.
+Status: **implemented**. The logical `Execution` / physical `Attempt` / immutable `ExecutionSkillBinding` model frozen
+by `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md` (status `implemented`) is now code: forward
+migration `0018_execution_snapshot.sql`, `internal/core/executions.go` (the `AdmitExecution` / `CreateRetryAttempt` /
+`RunAgainExecution` Store seam), and the `SkillRunSpec`/`SkillBundleRef` extension of the internal control contract.
+It implements **no** RetrievalCapability minting, dispatch/claim/lease plumbing, or credential/object-locator field
+(ADR D8/D7): the durable PostgreSQL snapshot is the sole authority later capability issuance is authorized against.
 
-- resolve enabled Agent Skills at Execution creation;
-- exact revision binding;
-- immutable dispatch descriptor;
-- retry/new Attempt behavior.
+- [x] **Migration** `0018_execution_snapshot.sql`: `executions` (logical identity — no version/updated_at/deleted_at),
+      `attempts` (physical, `ordinal` + state machine, `UNIQUE(execution_id, ordinal)`), and
+      `execution_skill_bindings` (immutable fact, composite FK `(skill_revision_id, skill_id)`, trigger-blocked
+      UPDATE, no bearer-credential field). `0015`/`0016`/`0017` unchanged.
+- [x] **Core** `internal/core/executions.go`: `AdmitExecution` resolves durable enabled bindings → exact current
+      revision (fail-closed `skill_revision_not_available`), then writes Execution + first eligible Attempt + all
+      bindings atomically; `CreateRetryAttempt` reuses the frozen bindings without re-resolving; `RunAgainExecution`
+      creates a new Execution and re-resolves. `skillBundles` returns the frozen descriptor ordered by
+      `canonical_name` then `skill_id` (ADR D4/D12).
+- [x] **Proto** `ExecutionInput.oneof spec` gains `SkillRunSpec skill_run = 2` carrying `SkillBundleRef[]`; generated
+      `internal/controlpb` regenerated and reconciled (pinned plugins, `protoc (unknown)`).
+- [x] **Tests** `integration/execution_snapshot_test.go` pins the stable anchors in
+      `specs/test-cases/cloud/skills/execution-skill-snapshot.md` plus migration fresh/upgrade.
+- [ ] RetrievalCapability minting / dispatch-claim-lease / Node delivery / Agent UI remain NOT implemented (later
+      phases).
+
+Frozen first-Attempt contract (ADR D3):
+
+- admission creates `Execution` + **first `Attempt`** + all `ExecutionSkillBinding` rows in one database-only
+  transaction — no Node/Controller external effect (HTTP/RPC/process/capability/Object Storage) inside it;
+- first `Attempt` starts durable `eligible` with empty `node_id` / lease / epoch / dispatch metadata;
+- Controller only claims/dispatches an **existing** Attempt; it never creates the first Attempt;
+- retry creates a new Attempt (`ordinal` increments) reusing the same Execution frozen snapshot;
+- crash recovery: an admitted Execution always has both the complete Skill snapshot and the first Attempt — there is
+  no legal "admitted but no first Attempt" state.
 
 ## Phase 6 — Retrieval capability
 
 ### Step 5A RetrievalCapability contract — FROZEN (design only)
 
-Status: **contract frozen; implementation NOT started; all changes remain uncommitted**. The
+Status: **contract frozen; Cloud-side implementation landed in Step 5B; all changes remain uncommitted**. The
 RetrievalCapability contract is closed by
-`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md` (status `proposed`) and its Node-side
+`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md` (status `implemented`) and its Node-side
 coherence contract `specs/decisions/node/agent-runtime/0-skill-materialization-and-readiness.md` (status `proposed`),
 with mirror test-cases under `specs/test-cases/controller/skill-delivery/` and `specs/test-cases/node/agent-runtime/`.
 Step 5A moves these two ADRs (previously registered under `cloud/skills/`) to their canonical Controller/Node leaf
-domains and closes the remaining open questions. **No implementation code, no schema change.**
+domains and closes the remaining open questions. **No schema change (ADR D13).**
 
 - [x] **Authorization basis**: capability only for revisions frozen into the Execution `ExecutionSkillBinding`;
       never re-resolve `Skill.current_revision_id` at claim/dispatch time.
@@ -1743,14 +1772,40 @@ domains and closes the remaining open questions. **No implementation code, no sc
       temporary_control_plane_failure.
 - [x] **Missing object**: no Stat-before-issuance; Node 404 → `object_not_available`, fail closed.
 - [x] **Schema impact**: NONE.
-- [ ] **Implementation** (capability mint/refresh, Node downloader/cache, READY barrier) NOT started (later slice).
+- [x] **Cloud-side implementation** (capability mint/refresh) delivered in Step 5B below; Node downloader/cache/READY
+      barrier remain later phases.
 
-### Implementation (later slice)
+### Step 5B RetrievalCapability implementation — IMPLEMENTED (Cloud side)
 
-- capability mint/refresh;
-- short-lived exact-object read authorization;
-- secret redaction/non-persistence;
-- Controller/Node transport contract.
+Status: **implemented (Cloud-side mint/refresh); Node downloader/cache + Controller relay remain Phase 6/7**. The
+Cloud side of `0-skill-retrieval-capability.md` is now code: `internal/skillstore/retrieval.go`
+(`RetrievalCapabilityIssuer` port + redacted `RetrievalCapability` value), `internal/skillstore/s3store/issuer.go`
+(S3 `PresignGetObject` exact-object GET mint), `internal/core/retrieval.go` (`MintSkillRetrievalCapabilities`:
+transact-resolved `(execution, attempt, skill_revision)` authority → parse frozen `object_locator` → sign), the
+`MintSkillRetrieval` control-gRPC RPC + D32 error-class mapping, config `storage.retrieval_capability_ttl` (default
+300s / max 900s), and `cmd/server` issuer wiring. No persistence, no schema change, no Stat-before-issuance, no
+credential logging (redacted `String()` + class-only fault messages).
+
+- [x] **Issuer boundary** `RetrievalCapabilityIssuer` (`Issue(ctx, Locator, ttl) → {URL, Method, ExpiresAt}`) — separate
+      from durable `ObjectStore`; `ObjectStore` port unchanged (no Presign added).
+- [x] **S3 mint** `s3store.NewIssuer` + `Issue`: `PresignGetObject` over exact bucket + logical `locator`, GET-only, TTL
+      clamped to configured bound; no existence probe.
+- [x] **Authority** `resolveRetrievalTargets`: `(execution_id, attempt_id)` must name a live non-terminal Attempt, and
+      each `skill_revision_id` must be a frozen `ExecutionSkillBinding` revision whose `object_locator` parses;
+      otherwise fail closed (`authorization_failed`/`revision_not_bound`/`attempt_not_eligible`).
+- [x] **Terminal fencing**: `succeeded/failed/canceled/superseded` attempts never mint (409 `attempt_not_eligible`).
+- [x] **No persistence / redaction**: mint/refresh adds no durable row and no credential column exists; bearer URL never
+      enters logs or durable state.
+- [x] **Failure classes** `storage_not_configured`/`revision_not_bound`/`attempt_not_eligible`/`signing_failed`/
+      `invalid_locator`/`authorization_failed` mapped in `internal/controlgrpc/fault.go`; provider detail never leaks.
+- [x] **gRPC** `MintSkillRetrieval(execution_id, attempt_id, skill_revision_id[]) → capabilities[]`; request carries no
+      locator/bucket/key/URL.
+- [x] **Config** `storage.retrieval_capability_ttl` (0→300s default; `<=0` or `>900s` rejected).
+- [x] **Tests** `internal/skillstore/retrieval_test.go` (redaction), `internal/skillstore/s3store/issuer_test.go`
+      (exact-object GET / signing error / non-positive TTL / real SDK signed URL),
+      `integration/retrieval_capability_test.go` (authorization, terminal fencing, storage_not_configured,
+      invalid_locator, no-persistence, refresh-preserves-revision).
+- [ ] Node downloader/cache, Controller relay (no proxy/select), READY barrier — later phases.
 
 ## Phase 7 — Node verified cache
 

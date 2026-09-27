@@ -52,3 +52,37 @@ func detailOf(st *status.Status) controlpb.ErrorCode {
 	}
 	return controlpb.ErrorCode_ERROR_CODE_UNSPECIFIED
 }
+
+// TestSkillRetrievalFaultMapping pins the Step 5B ADR D32 issuance taxonomy: each stable class maps to
+// the promised status code + ErrorDetail, and none leaks provider detail — signing_failed maps to
+// UNAVAILABLE yet keeps its own class name, not the opaque database-failure message.
+func TestSkillRetrievalFaultMapping(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		code   codes.Code
+		detail controlpb.ErrorCode
+	}{
+		{"storage not configured", &core.Fault{Code: "storage_not_configured", Status: 503}, codes.FailedPrecondition, controlpb.ErrorCode_ERROR_CODE_SKILL_STORAGE_NOT_CONFIGURED},
+		{"attempt not eligible", &core.Fault{Code: "attempt_not_eligible", Status: 409}, codes.FailedPrecondition, controlpb.ErrorCode_ERROR_CODE_SKILL_ATTEMPT_NOT_ELIGIBLE},
+		{"revision not bound", &core.Fault{Code: "revision_not_bound", Status: 404}, codes.NotFound, controlpb.ErrorCode_ERROR_CODE_SKILL_REVISION_NOT_BOUND},
+		{"authorization failed", &core.Fault{Code: "authorization_failed", Status: 404}, codes.NotFound, controlpb.ErrorCode_ERROR_CODE_SKILL_AUTHORIZATION_FAILED},
+		{"signing failed", &core.Fault{Code: "signing_failed", Status: 503}, codes.Unavailable, controlpb.ErrorCode_ERROR_CODE_SKILL_SIGNING_FAILED},
+		{"invalid locator", &core.Fault{Code: "invalid_locator", Status: 500}, codes.Internal, controlpb.ErrorCode_ERROR_CODE_SKILL_INVALID_LOCATOR},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st := status.Convert(toStatus(c.err))
+			if st.Code() != c.code {
+				t.Fatalf("%s: code %s, want %s", c.name, st.Code(), c.code)
+			}
+			if got := detailOf(st); got != c.detail {
+				t.Fatalf("%s: detail %s, want %s", c.name, got, c.detail)
+			}
+			// Class-only message: the stable class name is returned verbatim, never provider detail.
+			if st.Message() != c.err.(*core.Fault).Code {
+				t.Fatalf("%s: message %q, want the stable class name %q", c.name, st.Message(), c.err.(*core.Fault).Code)
+			}
+		})
+	}
+}

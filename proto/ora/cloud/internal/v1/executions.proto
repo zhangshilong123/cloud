@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ora.cloud.internal.v1;
 
+import "google/protobuf/timestamp.proto";
+
 // Durable coordination of Node executions, starting with the clone closed loop. Every call that
 // changes state returns only after Cloud committed it, and each such call carries a caller-chosen
 // `submission_id`: repeating a submission with identical content returns the original response
@@ -27,6 +29,13 @@ service ExecutionService {
   // Lists registered executions without a result so a recovering or replacement worker resumes
   // the original executions instead of creating new ones.
   rpc ListPendingDispatches(ListPendingDispatchesRequest) returns (ListPendingDispatchesResponse);
+  // Mints one short-lived, GET-only, exact-object retrieval capability per frozen skill revision for
+  // an eligible (non-terminal) Attempt, after verifying the durable (execution, attempt,
+  // skill_revision) authority chain (Step 5B RetrievalCapability ADR). A refresh for the same triple
+  // returns a fresh capability over the same frozen revision; nothing is persisted and no new
+  // Execution/Attempt/Binding is created. `url` is a bearer credential and must never be logged or
+  // persisted by any party.
+  rpc MintSkillRetrieval(MintSkillRetrievalRequest) returns (MintSkillRetrievalResponse);
 }
 
 // Persistent Node identity plus the incarnation that produced a fact. Historical incarnations
@@ -42,11 +51,29 @@ message CloneSpec {
   string branch = 2;
 }
 
+// One exact frozen SkillRevision reference carried in a dispatch descriptor (Execution Snapshot
+// ADR D4 / plan §17.1). It mirrors the immutable ExecutionSkillBinding content identity so the
+// Controller and Node never re-resolve mutable Skill state. The retrieval capability is a separate
+// later layer and deliberately not carried here.
+message SkillBundleRef {
+  string skill_revision_id = 1;
+  string content_digest = 2;
+  int64 size_bytes = 3;
+  string package_format = 4;
+  int32 package_format_version = 5;
+}
+
+// A skill-bearing execution kind: the exact frozen Skill revisions an Agent execution runs with.
+message SkillRunSpec {
+  repeated SkillBundleRef skill_bundles = 1;
+}
+
 // Full execution input as dispatched; extended with new oneof members as further execution kinds
 // join the loop.
 message ExecutionInput {
   oneof spec {
     CloneSpec clone = 1;
+    SkillRunSpec skill_run = 2;
   }
 }
 
@@ -161,4 +188,28 @@ message ListPendingDispatchesRequest {
 
 message ListPendingDispatchesResponse {
   repeated ExecutionRecord records = 1;
+}
+
+// MintSkillRetrievalRequest asks Cloud to mint retrieval capabilities for one or more frozen skill
+// revisions. The caller supplies only durable identities (execution_id, attempt_id,
+// skill_revision_ids) — never a locator, bucket, key, or workspace ownership claim (ADR D9/D12/D17).
+message MintSkillRetrievalRequest {
+  string execution_id = 1;
+  string attempt_id = 2;
+  repeated string skill_revision_ids = 3;
+}
+
+// SkillRetrievalCapability is one minted short-lived exact-object GET credential (ADR D3/D5). `url`
+// is a bearer credential: transient delivery state, never persisted or logged. `method` is fixed to
+// "GET".
+message SkillRetrievalCapability {
+  string skill_revision_id = 1;
+  string method = 2;
+  string url = 3;
+  // expires_at is the authoritative expiry taken from the actual signing validity (ADR D24).
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message MintSkillRetrievalResponse {
+  repeated SkillRetrievalCapability capabilities = 1;
 }

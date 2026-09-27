@@ -58,6 +58,15 @@ Migrations are executed in ascending numerical sequence. The sequence is **appen
   - `activation_outcome` (`IS NULL OR IN ('activated','activation_conflict')`): the durable activation-CAS result (D20); NULL for every non-`committed` state.
   - A unique index `skill_ingestion_candidate_uniq(workspace_id, idempotency_key, canonical_name)`: the deterministic, concurrency-safe per-candidate idempotency identity the recovery path depends on.
   - This file does not modify `0015_skills.sql`.
+- **`0017_agents_and_skill_bindings.sql`** (append-only, after `0016`; following `specs/decisions/cloud/agent/0-agent-skill-binding.md`): the Cloud Skills Agent authority and AgentSkillBinding:
+  - `agents`: a mutable business resource owned by exactly one Collaboration Workspace (soft `deleted_at`, `status active|disabled`, active-name uniqueness per workspace, immutable workspace ownership).
+  - `agent_skill_bindings`: the mutable future-execution configuration (`enabled` boolean, `version`, composite PK `(agent_id, skill_id)`, remove = DELETE) referencing only Skill business identity — never a SkillRevision / digest / locator.
+  - Historical correctness is carried by Phase 5's `execution_skill_bindings`, never this table.
+- **`0018_execution_snapshot.sql`** (append-only, after `0017`; following `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md`): the Cloud Skills logical Execution / physical Attempt / immutable ExecutionSkillBinding snapshot:
+  - `executions`: the logical execution identity (`execution_id`, `tenant_id`, `workspace_id`, `agent_id`, `actor_user_id`, `input jsonb`) with no version/updated_at/deleted_at.
+  - `attempts`: physical attempts (`ordinal` increments, state machine `eligible→…→succeeded/failed/canceled/superseded`, `UNIQUE(execution_id, ordinal)`); the first Attempt is created atomically with its Execution.
+  - `execution_skill_bindings`: the immutable execution fact (`skill_revision_id` + denormalized `content_digest`/`size_bytes`/`package_format(_version)`, composite FK `(skill_revision_id, skill_id)`) with trigger-blocked UPDATE and no bearer-credential field.
+  - Deliberately no RetrievalCapability / signed-URL / object-locator field and no dispatch/claim/lease plumbing (Phase 6+).
 
 ## Checksum integrity and immutability
 

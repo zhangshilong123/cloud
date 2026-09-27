@@ -58,6 +58,15 @@
   - `activation_outcome`（`IS NULL OR IN ('activated','activation_conflict')`）：activation CAS 结果的 durable 表示（D20）；非 `committed` 态恒为 NULL。
   - 唯一索引 `skill_ingestion_candidate_uniq(workspace_id, idempotency_key, canonical_name)`：确定、并发安全的 per-candidate 幂等身份，是恢复路径「确定性命中既有 ingestion」的前提。
   - 本文件不修改 `0015_skills.sql`。
+- **`0017_agents_and_skill_bindings.sql`**（append-only，排在 `0016` 之后；对应 `specs/decisions/cloud/agent/0-agent-skill-binding.md`）：Cloud Skills 的 Agent 权威与 AgentSkillBinding：
+  - `agents`：归属恰好一个 Collaboration Workspace 的可变业务资源（软删除 `deleted_at`、`status active|disabled`、active name per-workspace 唯一、workspace 归属不可变）。
+  - `agent_skill_bindings`：可变的 future-execution 配置（`enabled` boolean、`version`、composite PK `(agent_id, skill_id)`、remove=DELETE），只引用 Skill 业务身份，绝不引用 SkillRevision / digest / locator。
+  - 历史正确性由 Phase 5 的 `execution_skill_bindings` 承载，不由本表承载。
+- **`0018_execution_snapshot.sql`**（append-only，排在 `0017` 之后；对应 `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md`）：Cloud Skills 的逻辑 Execution / 物理 Attempt / 不可变 ExecutionSkillBinding 快照：
+  - `executions`：逻辑执行身份（`execution_id`、`tenant_id`、`workspace_id`、`agent_id`、`actor_user_id`、`input jsonb`），无 version/updated_at/deleted_at。
+  - `attempts`：物理尝试（`ordinal` 递增、状态机 `eligible→…→succeeded/failed/canceled/superseded`、`UNIQUE(execution_id, ordinal)`）；首个 Attempt 与 Execution 同一事务原子创建。
+  - `execution_skill_bindings`：不可变执行 fact（`skill_revision_id` + 冗余 `content_digest`/`size_bytes`/`package_format(_version)`，复合外键 `(skill_revision_id, skill_id)`），trigger 阻止 UPDATE，无 bearer-credential 字段。
+  - 刻意不创建 RetrievalCapability / signed-URL / object-locator 字段，也不引入 dispatch/claim/lease 管线（Phase 6+）。
 
 ## 校验和完整性与不可变性
 

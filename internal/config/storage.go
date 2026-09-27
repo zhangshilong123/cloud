@@ -12,6 +12,12 @@ const (
 	defaultStorageRequestTimeout = 30 * time.Second
 )
 
+// RetrievalCapability TTL bounds (Step 5B ADR D24): default 300s, hard maximum 900s.
+const (
+	defaultRetrievalCapabilityTTL = 300 * time.Second
+	maxRetrievalCapabilityTTL     = 900 * time.Second
+)
+
 // StorageConfig is the optional `storage` section. It is a pointer field on Config:
 // a nil pointer means the section is absent, the process starts normally, and the
 // Object Store stays unconfigured (Store.SkillsObjectStore == nil, the saga returns
@@ -38,6 +44,11 @@ type StorageConfig struct {
 	TLS               StorageTLSConfig      `mapstructure:"tls"`
 	AllowInsecureHTTP bool                  `mapstructure:"allow_insecure_http"`
 	Timeouts          StorageTimeoutsConfig `mapstructure:"timeouts"`
+
+	// RetrievalCapabilityTTL is the lifetime of each minted retrieval capability (Step 5B ADR D24):
+	// default 300s, hard maximum 900s. It is the exposure window bound (D30); fencing never revokes
+	// an already-minted URL, so this short TTL is the actual control.
+	RetrievalCapabilityTTL time.Duration `mapstructure:"retrieval_capability_ttl"`
 }
 
 // StorageTLSConfig controls TLS verification. Verify is a pointer so that an
@@ -69,6 +80,9 @@ func (s *StorageConfig) applyDefaults() {
 	}
 	if s.Timeouts.Request == 0 {
 		s.Timeouts.Request = defaultStorageRequestTimeout
+	}
+	if s.RetrievalCapabilityTTL == 0 {
+		s.RetrievalCapabilityTTL = defaultRetrievalCapabilityTTL
 	}
 }
 
@@ -112,6 +126,12 @@ func (s *StorageConfig) Validate() error {
 	}
 	if s.Timeouts.Request < 0 {
 		return fmt.Errorf("storage.timeouts.request must be >= 0")
+	}
+	if s.RetrievalCapabilityTTL <= 0 {
+		return fmt.Errorf("storage.retrieval_capability_ttl must be positive")
+	}
+	if s.RetrievalCapabilityTTL > maxRetrievalCapabilityTTL {
+		return fmt.Errorf("storage.retrieval_capability_ttl must be <= %s (ADR D24 hard maximum)", maxRetrievalCapabilityTTL)
 	}
 	return nil
 }

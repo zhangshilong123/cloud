@@ -48,21 +48,15 @@ func configureCollaboration(store *core.Store, developmentFixtures bool, log *za
 	log.Warn("development collaboration fixtures enabled: Agent/Team/Workflow targets served from in-memory fixtures (development-only; production must leave collaboration.development_fixtures false)")
 }
 
-// wireObjectStore translates the resolved `storage` section into the production
-// S3-compatible ObjectStore and returns it, or nil when the section is absent (the
-// saga then reports object_store_unavailable). An invalid section was already
-// rejected by config.Load, so a non-nil error here is a construction failure
-// (unreadable CA file, unusable credentials) and must fail startup.
-func wireObjectStore(ctx context.Context, sc *config.StorageConfig, log *zap.Logger) (skillstore.ObjectStore, error) {
-	if sc == nil {
-		log.Info("object storage not configured; Skill uploads unavailable")
-		return nil, nil
-	}
+// s3Config translates the resolved `storage` section into the concrete s3store.Config. TLS
+// verification is a resolved bool (defaults already applied by config.Load), and credential_mode is
+// normalized.
+func s3Config(sc *config.StorageConfig) s3store.Config {
 	verify := true
 	if sc.TLS.Verify != nil {
 		verify = *sc.TLS.Verify
 	}
-	store, err := s3store.New(ctx, s3store.Config{
+	return s3store.Config{
 		Region:             sc.Region,
 		Bucket:             sc.Bucket,
 		Endpoint:           sc.Endpoint,
@@ -73,12 +67,42 @@ func wireObjectStore(ctx context.Context, sc *config.StorageConfig, log *zap.Log
 		CAFile:             sc.TLS.CAFile,
 		ConnectTimeout:     sc.Timeouts.Connect,
 		RequestTimeout:     sc.Timeouts.Request,
-	})
+	}
+}
+
+// wireObjectStore translates the resolved `storage` section into the production
+// S3-compatible ObjectStore and returns it, or nil when the section is absent (the
+// saga then reports object_store_unavailable). An invalid section was already
+// rejected by config.Load, so a non-nil error here is a construction failure
+// (unreadable CA file, unusable credentials) and must fail startup.
+func wireObjectStore(ctx context.Context, sc *config.StorageConfig, log *zap.Logger) (skillstore.ObjectStore, error) {
+	if sc == nil {
+		log.Info("object storage not configured; Skill uploads unavailable")
+		return nil, nil
+	}
+	store, err := s3store.New(ctx, s3Config(sc))
 	if err != nil {
 		return nil, fmt.Errorf("configure object storage: %w", err)
 	}
 	log.Info("object storage configured", zap.String("provider", sc.Provider), zap.String("bucket", sc.Bucket))
 	return store, nil
+}
+
+// wireRetrievalIssuer translates the resolved `storage` section into the production S3-compatible
+// RetrievalCapabilityIssuer, or nil when the section is absent (mint then reports
+// storage_not_configured). It is deliberately separate from wireObjectStore: ObjectStore owns
+// durable put/stat/get, the issuer mints ephemeral credentials (Step 5B ADR D28).
+func wireRetrievalIssuer(ctx context.Context, sc *config.StorageConfig, log *zap.Logger) (skillstore.RetrievalCapabilityIssuer, error) {
+	if sc == nil {
+		log.Info("object storage not configured; Skill retrieval capabilities unavailable")
+		return nil, nil
+	}
+	issuer, err := s3store.NewIssuer(ctx, s3Config(sc))
+	if err != nil {
+		return nil, fmt.Errorf("configure retrieval capability issuer: %w", err)
+	}
+	log.Info("retrieval capability issuer configured", zap.String("provider", sc.Provider), zap.String("bucket", sc.Bucket))
+	return issuer, nil
 }
 
 func run() (runErr error) {
@@ -106,6 +130,12 @@ func run() (runErr error) {
 	defer func() { runErr = errors.Join(runErr, store.Pool.Close()) }()
 	if store.SkillsObjectStore, e = wireObjectStore(ctx, cfg.Storage, log); e != nil {
 		return e
+	}
+	if store.RetrievalCapabilityIssuer, e = wireRetrievalIssuer(ctx, cfg.Storage, log); e != nil {
+		return e
+	}
+	if cfg.Storage != nil {
+		store.RetrievalCapabilityTTL = cfg.Storage.RetrievalCapabilityTTL
 	}
 	configureCollaboration(store, cfg.Collaboration.DevelopmentFixtures, log)
 	if e := store.CheckSchema(ctx); e != nil {

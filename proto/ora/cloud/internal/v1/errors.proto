@@ -33,4 +33,30 @@ enum ErrorCode {
   ERROR_CODE_LEASE_HELD = 6;
   // The service principal is not allowed to perform this call. Carried with PERMISSION_DENIED.
   ERROR_CODE_SERVICE_FORBIDDEN = 7;
+  // RetrievalCapability (Step 5B) error taxonomy — see the skill-retrieval-capability ADR D32.
+  // Object storage is not configured; no capability can be minted and no proxy/fake URL is offered.
+  // Carried with FAILED_PRECONDITION.
+  ERROR_CODE_SKILL_STORAGE_NOT_CONFIGURED = 8;
+  // The requested skill_revision_id is not among the execution's frozen bindings. Carried with
+  // NOT_FOUND.
+  ERROR_CODE_SKILL_REVISION_NOT_BOUND = 9;
+  // The attempt is terminal (succeeded/failed/canceled/superseded) and must not mint a capability.
+  // Carried with FAILED_PRECONDITION.
+  ERROR_CODE_SKILL_ATTEMPT_NOT_ELIGIBLE = 10;
+  // The requested object does not exist in storage; the caller must fail closed. Carried with
+  // NOT_FOUND.
+  ERROR_CODE_SKILL_OBJECT_NOT_AVAILABLE = 11;
+  // Cloud could not produce a signed URL (provider error). Carried with UNAVAILABLE; retry after a
+  // short wait.
+  ERROR_CODE_SKILL_SIGNING_FAILED = 12;
+  // A frozen revision carries an object_locator Cloud cannot parse into a logical key. Carried with
+  // INTERNAL.
+  ERROR_CODE_SKILL_INVALID_LOCATOR = 13;
+  // The capability has expired; refresh or retry. Carried with FAILED_PRECONDITION.
+  ERROR_CODE_SKILL_EXPIRED_OR_RETRY_REQUIRED = 14;
+  // The (execution_id, attempt_id, skill_revision_id) authority chain does not verify. Carried with
+  // NOT_FOUND so it is indistinguishable from an unknown record.
+  ERROR_CODE_SKILL_AUTHORIZATION_FAILED = 15;
+  // Transient control-plane failure; safe to retry. Carried with UNAVAILABLE.
+  ERROR_CODE_SKILL_TEMPORARY_CONTROL_PLANE_FAILURE = 16;
 }
