@@ -78,6 +78,50 @@ export interface AdminResource {
   version: number;
 }
 
+export type AgentStatus = typeof AgentStatus[keyof typeof AgentStatus];
+
+
+export const AgentStatus = {
+  active: 'active',
+  disabled: 'disabled',
+} as const;
+
+export interface Agent {
+  createdAt: string;
+  createdBy: string;
+  /** @nullable */
+  deletedAt: string | null;
+  id: string;
+  name: string;
+  status: AgentStatus;
+  updatedAt: string;
+  version: number;
+  workspaceId: string;
+}
+
+export interface AgentSkillBinding {
+  agentId: string;
+  canonicalName: string;
+  createdAt: string;
+  displayName: string;
+  enabled: boolean;
+  skillId: string;
+  updatedAt: string;
+  version: number;
+}
+
+export interface AgentSkillBindingListItem {
+  agentId: string;
+  canonicalName: string;
+  createdAt: string;
+  displayName: string;
+  enabled: boolean;
+  id: string;
+  skillId: string;
+  updatedAt: string;
+  version: number;
+}
+
 /**
  * @nullable
  */
@@ -1776,6 +1820,76 @@ export type PatchApiV1TenantsTidSpacesSpaceIdBody = {
   name: string;
   /** @minimum 0 */
   version: number;
+};
+
+export type GetApiV1TenantsTidSpacesSpaceIdAgentsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Exclusive UUID cursor, ascending stable ordering.
+ */
+after?: string;
+};
+
+export type GetApiV1TenantsTidSpacesSpaceIdAgents200 = {
+  items: Agent[];
+  nextCursor: string;
+};
+
+export type PostApiV1TenantsTidSpacesSpaceIdAgentsBody = {
+  name: string;
+};
+
+export type DeleteApiV1TenantsTidSpacesSpaceIdAgentsAgentIdBody = {
+  /** @minimum 0 */
+  version: number;
+};
+
+export type PatchApiV1TenantsTidSpacesSpaceIdAgentsAgentIdBodyStatus = typeof PatchApiV1TenantsTidSpacesSpaceIdAgentsAgentIdBodyStatus[keyof typeof PatchApiV1TenantsTidSpacesSpaceIdAgentsAgentIdBodyStatus];
+
+
+export const PatchApiV1TenantsTidSpacesSpaceIdAgentsAgentIdBodyStatus = {
+  active: 'active',
+  disabled: 'disabled',
+} as const;
+
+export type PatchApiV1TenantsTidSpacesSpaceIdAgentsAgentIdBody = {
+  name?: string;
+  status?: PatchApiV1TenantsTidSpacesSpaceIdAgentsAgentIdBodyStatus;
+  /** @minimum 0 */
+  version: number;
+};
+
+export type GetApiV1TenantsTidSpacesSpaceIdAgentsAgentIdSkillsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Exclusive UUID cursor, ascending stable ordering.
+ */
+after?: string;
+};
+
+export type GetApiV1TenantsTidSpacesSpaceIdAgentsAgentIdSkills200 = {
+  items: AgentSkillBindingListItem[];
+  nextCursor: string;
+};
+
+export type PostApiV1TenantsTidSpacesSpaceIdAgentsAgentIdSkillsBody = {
+  skillId: string;
+};
+
+export type DeleteApiV1TenantsTidSpacesSpaceIdAgentsAgentIdSkillsSkillIdBody = { [key: string]: unknown };
+
+export type PutApiV1TenantsTidSpacesSpaceIdAgentsAgentIdSkillsSkillIdBody = {
+  enabled: boolean;
+  /** @minimum 0 */
+  version?: number;
 };
 
 export type GetApiV1TenantsTidSpacesSpaceIdMembersParams = {

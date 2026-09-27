@@ -21,7 +21,7 @@ import (
 // given caller identity plus a multipart body assembled from text fields and one file part. The
 // store is nil: every assertion in this file returns before the handler reaches identity/storage,
 // so no database is involved.
-func uploadTestContext(t *testing.T, creds *simulator.Credentials, subject, source string, key string, fields map[string][]string, files map[string][]byte) (*gin.Context, *httptest.ResponseRecorder) {
+func uploadTestContext(t *testing.T, creds *simulator.Credentials, subject, source, key string, fields map[string][]string, files map[string][]byte) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)

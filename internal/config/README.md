@@ -11,11 +11,15 @@
   - `LoggerConfig`：日志级别、输出文件路径、轮转阈值（最大单文件体积、保留天数、备份数、gzip 压缩）。
   - `DatabaseConfig`：驱动类型（必须为 `postgres`）、连接串 DSN 以及连接池上限参数（`max_open_conns`、`max_idle_conns`、`conn_max_lifetime`）。
   - `AuthConfig`：预期的 token 受众和 `TrustedKey` 验证参数列表。
+  - `StorageConfig`（可选指针）：生产 Object Storage 的 `storage` 段。字段见 `configs/config.yaml` 注释样例
+    与 `specs/decisions/cloud/skills/20260927-production-object-storage-provider.md`。
 - **基于 Viper 的分层配置加载**：
   - 依次在 `./configs`、`../configs` 和 `.` 目录下检索 `config.yaml`。
   - 支持通过 `-config <path>` 显式指定配置文件路径。
   - 自动映射带有 `CLOUD_` 前缀的环境变量，将点号替换为下划线（例如 `CLOUD_DATABASE_DSN` 覆盖 `database.dsn`）。
 - **启动期合理性校验**：对不合法的配置返回明确错误并拒绝启动；例如，`read_timeout`、`write_timeout` 和 `conn_max_lifetime` 必须是正时长。
+  `storage` 段存在但非法（未知 provider、缺 bucket/region、TLS/凭证组合冲突、超时非法）同样拒绝启动；段缺失则
+  进程正常启动、`SkillsObjectStore` 保持 nil。
 
 ## 边界与不变量
 

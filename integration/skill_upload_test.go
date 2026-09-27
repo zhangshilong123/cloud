@@ -214,7 +214,7 @@ func asMap(v any) map[string]any {
 func (f *skillUploadFixture) skillRowCounts() (skills, revisions, ingestions int) {
 	f.t.Helper()
 	must(f.t, f.store.Pool.QueryRow(`SELECT (SELECT count(*) FROM skills), (SELECT count(*) FROM skill_revisions), (SELECT count(*) FROM skill_ingestions)`).Scan(&skills, &revisions, &ingestions))
-	return
+	return skills, revisions, ingestions
 }
 
 func TestSkillUploadZipHappyPath(t *testing.T) {

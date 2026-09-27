@@ -11,10 +11,10 @@ func itoa(n int) string { return strconv.Itoa(n) }
 
 // PublicRequest is populated only after service and final-user credentials are verified.
 type PublicRequest struct {
-	Method, Path, TenantID, ProjectID, WorkspaceID, SpaceID, OperationID, CloneID, UserID, IssueID, CommentID, LabelID, StatusID, ViewID, RunID, ContextRefID, InteractionID, FormRef, Key, After, Query, GroupBy string
-	Limit                                                                                                                                                                                                         int
-	Body                                                                                                                                                                                                          Object
-	Identity                                                                                                                                                                                                      *Claims
+	Method, Path, TenantID, ProjectID, WorkspaceID, SpaceID, OperationID, CloneID, UserID, IssueID, CommentID, LabelID, StatusID, ViewID, RunID, ContextRefID, InteractionID, FormRef, AgentID, SkillID, Key, After, Query, GroupBy string
+	Limit                                                                                                                                                                                                                           int
+	Body                                                                                                                                                                                                                            Object
+	Identity                                                                                                                                                                                                                        *Claims
 }
 
 // Public executes one authorized public request in a short database transaction.
@@ -75,6 +75,18 @@ func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, erro
 			events = append(events, SpaceEvent{Type: "space.member_updated", SpaceID: r.SpaceID})
 		case r.SpaceID == "" && strings.HasSuffix(r.Path, "/spaces") && r.Method == "POST":
 			out = createSpace(t, r, uid)
+		case r.SpaceID != "" && r.AgentID != "" && r.SkillID != "" && r.Method == "PUT":
+			out = putAgentSkill(t, r, uid)
+		case r.SpaceID != "" && r.AgentID != "" && r.SkillID != "" && r.Method == "DELETE":
+			out = detachAgentSkill(t, r, uid)
+		case r.SpaceID != "" && r.AgentID != "" && strings.HasSuffix(r.Path, "/skills") && r.Method == "POST":
+			out = attachAgentSkill(t, r, uid)
+		case r.SpaceID != "" && r.AgentID != "" && r.Method == "PATCH":
+			out = patchAgent(t, r, uid)
+		case r.SpaceID != "" && r.AgentID != "" && r.Method == "DELETE":
+			out = archiveAgent(t, r, uid)
+		case r.SpaceID != "" && strings.HasSuffix(r.Path, "/agents") && r.Method == "POST":
+			out = createAgent(t, r, uid)
 		case r.SpaceID != "" && r.Method == "PATCH":
 			out = patchSpace(t, r, uid)
 			events = append(events, SpaceEvent{Type: "space.updated", SpaceID: r.SpaceID, Version: out.N("version")})
@@ -334,6 +346,12 @@ func readPublic(t *transaction, r *PublicRequest, uid string) Object {
 			// (project workspace-sharing migration). Unscoped projects have no space_id
 			// and never appear here.
 			return page(t, "SELECT p.* FROM projects p WHERE p.space_id=$1 AND p.deleted_at IS NULL", []any{r.SpaceID}, "p.id", r)
+		case r.AgentID != "" && strings.HasSuffix(r.Path, "/skills"):
+			return listAgentSkills(t, r, uid)
+		case r.AgentID != "":
+			return getAgent(t, r, uid)
+		case strings.HasSuffix(r.Path, "/agents"):
+			return listAgents(t, r, uid)
 		default:
 			spaceMember(t, r.SpaceID, uid)
 			return t.one("SELECT * FROM collab_workspaces WHERE id=$1", r.SpaceID)

@@ -20,6 +20,7 @@ type Config struct {
 	Auth          AuthConfig          `mapstructure:"auth"`
 	Collaboration CollaborationConfig `mapstructure:"collaboration"`
 	Control       ControlConfig       `mapstructure:"control"`
+	Storage       *StorageConfig      `mapstructure:"storage"`
 }
 
 // CollaborationConfig gates optional collaboration-capability wiring on the Store.
@@ -96,6 +97,12 @@ func Load(configPath string) (*Config, error) {
 	}
 	if cfg.Control.GRPCAddr == "" {
 		return nil, fmt.Errorf("control.grpc_addr is required")
+	}
+	if cfg.Storage != nil {
+		cfg.Storage.applyDefaults()
+		if err := cfg.Storage.Validate(); err != nil {
+			return nil, err
+		}
 	}
 
 	return &cfg, nil

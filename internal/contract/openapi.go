@@ -85,6 +85,15 @@ func Document() map[string]any {
 	s["SpaceMemberListItem"] = resource("id workspaceId userId role status version displayName joinedAt", "")
 	properties(s, "SpaceMember")["role"] = enumeration("owner", "admin", "member")
 	s["SpaceEvent"] = object(obj{"type": enumeration("space.updated", "space.member_updated", "project.created", "project.updated", "project.archived"), "spaceId": uuid(), "projectId": optional(uuid()), "version": number()}, "type", "spaceId")
+	s["Agent"] = resource("id workspaceId name status version createdBy createdAt updatedAt deletedAt", "deletedAt")
+	agentProps := properties(s, "Agent")
+	agentProps["status"] = enumeration("active", "disabled")
+	s["AgentSkillBinding"] = resource("agentId skillId canonicalName displayName enabled version createdAt updatedAt", "")
+	bindingProps := properties(s, "AgentSkillBinding")
+	bindingProps["enabled"] = boolean()
+	s["AgentSkillBindingListItem"] = resource("id agentId skillId canonicalName displayName enabled version createdAt updatedAt", "")
+	bindingListItemProps := properties(s, "AgentSkillBindingListItem")
+	bindingListItemProps["enabled"] = boolean()
 	s["Project"] = resource("id tenantId ownerUserId spaceId name repositoryUrl defaultBranch credentialRefId lifecycle version createdAt deletedAt", "spaceId credentialRefId deletedAt")
 	s["Workspace"] = resource("id tenantId ownerUserId projectId kind desiredState observedState runtimeGeneration version admissionOpen admissionEpoch createdAt deletedAt", "deletedAt")
 	s["WorkspaceListItem"] = resource("id tenantId ownerUserId projectId kind desiredState observedState runtimeGeneration version admissionOpen admissionEpoch createdAt deletedAt branchName baseCommitId title", "deletedAt baseCommitId title")
@@ -321,6 +330,8 @@ func tag(r router.Route) string {
 		return "me"
 	case strings.Contains(r.Path, "/clones"):
 		return "clones"
+	case strings.Contains(r.Path, "/agents"):
+		return "agents"
 	case strings.Contains(r.Path, "/spaces"):
 		return "spaces"
 	case strings.Contains(r.Path, "/workspaces"):
@@ -350,7 +361,7 @@ func skillsUploadRequestSchema() obj {
 }
 
 func isList(r router.Route) bool {
-	return r.Method == "GET" && (strings.HasSuffix(r.Path, "/tenants") || strings.HasSuffix(r.Path, "/members") || strings.HasSuffix(r.Path, "/projects") || strings.HasSuffix(r.Path, "/workspaces") || strings.HasSuffix(r.Path, "/spaces") || strings.HasSuffix(r.Path, "/resource-status") || strings.HasSuffix(r.Path, "/issue-statuses") || strings.HasSuffix(r.Path, "/labels") || strings.HasSuffix(r.Path, "/issue-views") || strings.HasSuffix(r.Path, "/comments") || strings.HasSuffix(r.Path, "/subscribers") || strings.HasSuffix(r.Path, "/clones"))
+	return r.Method == "GET" && (strings.HasSuffix(r.Path, "/tenants") || strings.HasSuffix(r.Path, "/members") || strings.HasSuffix(r.Path, "/projects") || strings.HasSuffix(r.Path, "/workspaces") || strings.HasSuffix(r.Path, "/spaces") || strings.HasSuffix(r.Path, "/resource-status") || strings.HasSuffix(r.Path, "/issue-statuses") || strings.HasSuffix(r.Path, "/labels") || strings.HasSuffix(r.Path, "/issue-views") || strings.HasSuffix(r.Path, "/comments") || strings.HasSuffix(r.Path, "/subscribers") || strings.HasSuffix(r.Path, "/clones") || strings.HasSuffix(r.Path, "/agents") || strings.HasSuffix(r.Path, "/skills"))
 }
 
 func responseSchema(r router.Route) (schema obj, status string) {
@@ -380,6 +391,17 @@ func responseSchema(r router.Route) (schema obj, status string) {
 		return ref("SourceUploadResult"), "200"
 	}
 	switch {
+	case strings.Contains(r.Path, "/agents"):
+		if strings.Contains(r.Path, "/skills") {
+			if r.Method == "GET" {
+				return object(obj{"items": array(ref("AgentSkillBindingListItem")), "nextCursor": str()}, "items", "nextCursor"), "200"
+			}
+			return ref("AgentSkillBinding"), "200"
+		}
+		if r.Method == "GET" && isList(r) {
+			return object(obj{"items": array(ref("Agent")), "nextCursor": str()}, "items", "nextCursor"), "200"
+		}
+		return ref("Agent"), "200"
 	case strings.Contains(r.Path, "/spaces"):
 		switch {
 		case strings.Contains(r.Path, "/members"):
@@ -545,6 +567,12 @@ func responseSchema(r router.Route) (schema obj, status string) {
 }
 
 func optionalField(name string, r router.Route) bool {
+	if strings.Contains(r.Path, "/agents") {
+		switch name {
+		case "name", "status":
+			return r.Method == "PATCH"
+		}
+	}
 	if strings.Contains(r.Path, "/issues") {
 		switch name {
 		case "title":
@@ -571,7 +599,7 @@ func inputSchema(name string, r router.Route) obj {
 		return obj{"type": "integer", "minimum": 1, "maximum": 3600}
 	case "protocolVersion":
 		return obj{"type": "integer", "enum": []int{1}}
-	case "initialized", "idle":
+	case "initialized", "idle", "enabled":
 		return boolean()
 	case "result":
 		return ref("EffectResult")
@@ -613,7 +641,7 @@ func inputSchema(name string, r router.Route) obj {
 		return uuid()
 	case "category":
 		return enumeration("unstarted", "started", "done", "closed")
-	case "labelId", "userId", "assigneeId", "executorId", "refId", "parentId", "projectRef", "targetId":
+	case "labelId", "userId", "assigneeId", "executorId", "refId", "parentId", "projectRef", "targetId", "skillId":
 		return uuid()
 	case "ids":
 		return array(uuid())
@@ -695,6 +723,26 @@ func description(r router.Route) string {
 	}
 	if r.Path == "/api/v1/tenants" && r.Method == "POST" {
 		base = "Public requests require a gateway service credential plus a caller-bound user credential. No tenant membership is required: the verified identity alone authorizes provisioning. Atomically creates a tenant named after the space, makes the caller its first administrator, creates the space with the given slug and makes the caller its owner. The tenant is an implicit container the product never shows. The idempotency key is matched per user across tenants and recorded under the created tenant. "
+	}
+	if strings.Contains(r.Path, "/agents") {
+		switch {
+		case strings.Contains(r.Path, "/skills") && r.Method == "POST":
+			base += "Attaches a Skill's business identity to an Agent as an enabled binding; the Skill must be live and in the same Collaboration Workspace (a cross-workspace or soft-deleted Skill is 404). A duplicate (agent, skill) is 409 binding_exists. Requires owner/admin and an idempotency key; the binding references identity only, never a specific revision. "
+		case strings.Contains(r.Path, "/skills") && r.Method == "PUT":
+			base += "Enables or disables one binding (enabled=true/false); enabled must be present. A disabled binding remains configuration but is excluded from future execution selection. Requires owner/admin and a matching version. "
+		case strings.Contains(r.Path, "/skills") && r.Method == "DELETE":
+			base += "Detaches a Skill from an Agent (hard delete; no version). An absent binding is 404 binding_not_found; a matching idempotency key replays the original detach. Requires owner/admin. "
+		case strings.Contains(r.Path, "/skills"):
+			base += "Lists an Agent's bindings, including bindings to soft-deleted Skills so stale configuration stays observable. Any active member can read. "
+		case r.Method == "POST":
+			base += "Creates an Agent owned by the Collaboration Workspace. Active names are unique within the workspace. Requires owner/admin and an idempotency key. "
+		case r.Method == "PATCH":
+			base += "Updates an Agent's name and/or status (active|disabled); omitted fields keep their current value. Requires owner/admin and a matching version. "
+		case r.Method == "DELETE":
+			base += "Soft-deletes an Agent; the creator or a workspace owner/admin may delete. A soft-deleted Agent denies new executions while historical state is preserved. Requires a matching version and an idempotency key. "
+		default:
+			base += "Reads an Agent or lists the workspace's live Agents; any active member can read. "
+		}
 	}
 	if strings.Contains(r.Path, "/clones") {
 		base += "Clone requests are independent accepted work items outside the project/workspace operation model: Cloud accepts them in its own transaction, a Controller claims and dispatches them over the internal control contract, and only the submitting user can read them. requestId is the caller's durable request identity: repeating it with the same repository and branch returns the original request, a different input is 409 idempotency_conflict. repository must be an https or ssh URL the Controller can clone; branch is a short branch name, never HEAD. executionId and nodeId are null until a dispatch is recorded; a pending state means awaiting reconciliation, never failure. "

@@ -280,6 +280,99 @@ success overall 200，`activation_conflict` 仍是 `activation` 字段而非 err
 404、single_candidate、partial-success 映射、fatal source 零副作用、>64 KiB 接受）全部通过。**仍未实现**：生产 Object
 Storage provider / `RetrievalCapability` / Node 交付 / Skills 看板 UI / AgentSkillBinding / ExecutionSkillBinding。
 
+**Step 4A 生产 Object Storage provider 契约已冻结（仅设计，实现 NOT started）**：ADR
+`specs/decisions/cloud/skills/20260927-production-object-storage-provider.md`（状态 `proposed`）在设计层关闭了生产
+Object Storage 缺口。审计结论：仓库**没有**任何既有权威对象存储 provider / 部署约定（`go.mod` 无 S3/AWS/MinIO/GCS/Azure
+SDK；`compose.yaml`/CI 只有 PostgreSQL；无 Helm/K8s；`config` 无 storage 段；`scripts/`/`Learn/`/`configs/`/`Taskfile.yml`
+无对象存储引用），因此新选 V1 provider 契约 = **单一 S3-compatible provider（不默认 AWS）**，唯一生产实现方向
+（`aws-sdk-go-v2` + `service/s3`，依赖仅在实现切片引入）。冻结的决策：`PutImmutable` create-only = 原生条件
+`PutObject(IfNoneMatch="*")` → 412 = `PutAlreadyExists`（禁止 HEAD-then-PUT 的 TOCTOU，无条件写入则 fail closed）；V1
+单次原子 PUT、**不启用 multipart**（单 PUT 5 GiB 上限 ≫ `MaxPackageBytes` ≈1 GiB 与 256 MiB 产品上限）；当前 port 保持
+`[]byte` 全缓冲、单次 PUT 无放大（256 MiB 不构成操作不安全）；错误映射 200→created / 412→already-exists / 400·403·size
+→ permanent / DNS·连接被拒·429 → transient / 5xx·发送后超时 → ambiguous，冻结 taxonomy（not_found / already_exists /
+temporary / throttled / unauthorized / forbidden / invalid_configuration / integrity_mismatch / ambiguous /
+permanent_failure，原始 SDK 错误绝不泄漏）；超时 connect 5s / request 30s、全部携带 caller context、无后台 retry
+worker；配置新增 `storage` 段（provider/bucket/region/endpoint/path_style/credential_mode/credentials_file/tls.verify/
+ca_file/allow_insecure_http/timeouts），bucket 单一配置、桶名不进 durable state；凭证仅部署平台机制（环境 / workload
+identity / 共享凭证文件），禁止进 DB/`SkillRevision`/API 响应/日志；TLS 生产默认 HTTPS + 校验、`allow_insecure_http`
+默认 false；integrity 权威 = `SHA256 + skillpkg.Decode + TreeDigestHex`（ETag 仅 evidence）；启动行为 = `storage` 存在
+但非法 → fail fast、缺失 → 进程启动 + `SkillsObjectStore` nil + saga 返回 `object_store_unavailable`（已实现）、不新增
+远程 bucket 启动探活；schema 影响 NONE（`0015`/`0016` 不变）。**生产 provider 实现未开始**（adapter + SDK 依赖 +
+`cmd/server` 装配 + `CLOUD_STORAGE_*` 绑定 + 启动校验，留待实现切片）。
+
+**Step 4B 生产 Object Storage provider 已实现（改动保持 uncommitted）**：Step 4A 契约落地为生产 adapter——新包
+`internal/skillstore/s3store`、`internal/config` 的 `storage` 段、`cmd/server` 装配，**不改变** `ObjectStore` port、schema
+（`0015`/`0016` 不变）、摄取 saga 语义。要点：`PutImmutable` = 单次 `PutObject(IfNoneMatch="*")`（无 HEAD-then-PUT、无
+multipart），`Stat` = HEAD，`Get` = 有界读 + 1 字节 oversize 探测（绝不无界 `io.ReadAll`）；错误分类经
+`*smithyhttp.ResponseError` 取 HTTP 状态（每个非 2xx 都能经 `*smithy.OperationError` 到达），404→absent、412→
+already-exists、429→transient、5xx→ambiguous、其余 4xx→permanent、DNS/`dial` 被拒→transient、建立后中断/deadline/
+cancel→ambiguous、未知→ambiguous，原始 SDK 错误绝不跨 port；超时 connect 5s/request 30s、每操作派生 caller deadline、
+transport `http.DefaultTransport.Clone()`（不改全局）、`RetryMaxAttempts:3`；凭证三模式 `environment`/`shared_credentials_file`/
+`workload_identity`，adapter 内解析、永不持久化/进日志；`storage` 段指针 `StorageConfig`（缺失→nil、存在但非法→fail fast），
+`applyDefaults`（credential_mode→environment、tls.verify→true、timeouts→5s/30s）后 `Validate`（provider=="s3"、bucket/region
+必填、endpoint scheme 与 http-vs-allow_insecure_http、credential_mode 白名单、credentials_file 必填、verify=false ⊥ ca_file、
+timeouts≥0），`configs/config.yaml` 带注释样例；`cmd/server.wireObjectStore` 翻译并赋值 `store.SkillsObjectStore`；依赖仅新增
+`aws-sdk-go-v2` + `service/s3` + `config` + `credentials`（config 模块的 SSO/STS/IMDS 为默认凭证链传递依赖，非 GCS/Azure/MinIO）。
+测试：`s3store_test.go`（fake-`api` outcome 矩阵、`If-None-Match: *`/body 透传、有界 Get、`New` 校验）+ 真实 SDK `httptest`
+端到端（条件 PUT、412→`PutAlreadyExists`）；`internal/config/storage_test.go`（缺失即 nil、默认值、全量解析、非法矩阵、
+http-with-allow、`CLOUD_STORAGE_BUCKET` env）。门禁：`go build`/`go vet`/`go test ./internal/... ./cmd/...`/`golangci-lint`/
+`git diff --check` 全部通过（仅 `cmd/devsetup` 在 Windows 的文件权限既有失败，与本次无关）。**仍未实现**：`RetrievalCapability`、
+Node 交付、Skills 看板 UI、AgentSkillBinding / ExecutionSkillBinding、GC/retention、MinIO dev fixture、真实 provider CI。
+
+**Step 5A RetrievalCapability 契约已冻结（仅设计，实现 NOT started，改动保持 uncommitted）**：读取侧契约由
+`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md`（`proposed`）及其 Node 侧一致性契约
+`specs/decisions/node/agent-runtime/0-skill-materialization-and-readiness.md`（`proposed`）闭合，镜像测试用例迁到
+`specs/test-cases/controller/skill-delivery/` 与 `specs/test-cases/node/agent-runtime/`。Step 5A 将这两份 ADR 从此前的
+`cloud/skills/` 迁到规范化的 Controller/Node 叶子域并闭合遗留开放问题：授权依据 = 仅对已冻结进 Execution
+`ExecutionSkillBinding` 的 revision 签发，claim/dispatch 时绝不重新解析 `Skill.current_revision_id`；范围 = 单一 immutable
+object、仅 GET、无 bucket/prefix/workspace 级或任意 key；表示 = short-lived signed HTTPS GET URL（bearer credential、
+vendor-neutral、不叫 S3 名）；TTL = 默认 300s、硬上限 900s、`expires_at` 显式下发（覆盖 dispatch + Node 调度 + 获取 + 时钟
+偏差 + 1–2 次 refresh-retry）；refresh = 同一 Execution + Attempt + 冻结 revision → 新 credential（不改 revision/locator/
+binding）；capability 永不 durable、永不落日志（redaction）；Controller 协调 + 转发、不代理 bytes、data plane 为 Node→Object
+Storage 直连；`ObjectStore` port 不变、新增 `RetrievalCapabilityIssuer` 式边界、`object_locator` 保持逻辑 key 而非 URL；
+fencing 不吊销已签发 bearer URL、V1 撤销 = credential 过期（无即时撤销承诺）；失败分类
+storage_not_configured / revision_not_bound / attempt_not_eligible / object_not_available / signing_failed /
+invalid_locator / expired_or_retry_required / authorization_failed / temporary_control_plane_failure；缺失对象 = 签发前不
+Stat/HEAD、Node 404 → `object_not_available` fail closed；**schema 影响 NONE**（`0015`/`0016` 不变）。**capability
+mint/refresh、Node downloader/cache、READY barrier 的实现 NOT started（后续切片）。**
+
+**Step 4A Agent/AgentSkillBinding 契约已冻结（仅设计，实现 NOT started，改动保持 uncommitted）**：最小 durable
+`Agent` + `AgentSkillBinding` 权威模型由 `specs/decisions/cloud/agent/0-agent-skill-binding.md`（`proposed`）闭合。
+审计确认当前**无任何 durable Agent 资源**（无 `agents` 表；`agent`/`team` 只是 issue 协作域 ActorRef 类型串；
+`CollaborationDirectory` 是 nil/"Unavailable" seam；frontend `features/agents/` 是 mock-only）。冻结要点：Agent 属
+`collab_workspaces`（非 Runtime `workspaces`/`projects`）；`agent_skill_bindings` 引用 `skill_id`（Skill identity）而非
+`skill_revision_id`/digest/locator，`PRIMARY KEY(agent_id, skill_id)` = 至多一条 binding；mutation = add/enable/disable/remove
++ 乐观 version（428/409）+ Idempotency-Key；Skill/Agent soft-delete 不影响历史 `ExecutionSkillBinding`，future admission
+排除 soft-deleted Skill、soft-deleted Agent 拒绝新 execution；Execution request 只携带 `agent_id`、绝不携带 Skill IDs，
+admission 只读 durable `AgentSkillBinding`；授权复用 `collab_workspace_members` 角色（owner/admin 可写、member 可读、非
+member 404）；`agents.id` 映射 `ActorRef{agent}`、taxonomy 不变、`CollaborationDirectory` 保持未接线。**Execution snapshot
+ADR `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md` 已修订：删除 explicit-skill-id admission fallback，
+冻结「准入只读 durable AgentSkillBinding」。** schema 方向仅设计（`agents` + `agent_skill_bindings` forward migration），
+**未写 migration、未写实现**。**Step 5B 仍 BLOCKED**（Execution snapshot 依赖 durable `AgentSkillBinding`，其实现尚未开始）。
+
+**Step 4B Agent/AgentSkillBinding 已实现（改动保持 uncommitted）**：Step 4A 冻结的最小 durable 权威模型落地为
+代码 —— forward migration `0017_agents_and_skill_bindings.sql`（`agents` + `agent_skill_bindings`，`0015`/`0016`
+不改）、`internal/core/agents.go`、workspace-scoped 公共 API + 生成的契约。`agents`（`workspace_id → collab_workspaces`
+归属、`name` 1..128、`status active|disabled`、`version`、软删 `deleted_at`、`UNIQUE(workspace_id,name) WHERE
+deleted_at IS NULL`、`agent_immutable_ownership` trigger 禁止跨 Workspace 原地移动）；`agent_skill_bindings`
+（`PRIMARY KEY(agent_id, skill_id)`、`enabled`、`version`、无 `deleted_at`，membership-style 移除 = DELETE）。9 个
+端点按既有 `/tenants/:tid/spaces/:spaceId/...` 约定：`GET/POST /agents`、`GET/PATCH/DELETE /agents/:agentId`、
+`GET/POST /agents/:agentId/skills`、`PUT/DELETE /agents/:agentId/skills/:skillId`（attach POST `{skillId}`、PUT
+`{enabled,version}`、PATCH `{name,status,version}`、DELETE `{version}`；POST/DELETE 走通用 Idempotency-Key，PUT/PATCH
+走 version 428/409）。授权复用 `workspaceRole`：非成员 `404 not_found`（无泄漏）、member 非 owner/admin 写 `403
+workspace_admin_required`、删除 creator 或 owner/admin；attach 强制同 Workspace + 未软删（跨 Workspace/软删 Skill →
+`404`），duplicate → `409 binding_exists`。核心还落地 **`enabledAgentSkillBindings` 读缝**（enabled + live Skill、
+按 `canonical_name` then `skill_id` 确定性排序、**不解析 revision/digest/locator**）——这是 Phase 5 Execution admission
+的唯一天然选择权威（ADR D8/D10）；**无任何** Execution/Attempt/ExecutionSkillBinding/capability/signed-URL/object
+locator 字段（ADR D13/D14）。contract/OpenAPI 同步（`Agent`/`AgentSkillBinding`/`AgentSkillBindingListItem` schema +
+`enabled`/`skillId` 输入 + 描述，`api/openapi.json` 经 `go run ./cmd/openapi` 重生成并通过
+`TestPublishedOpenAPIIsValidAndCurrent`；frontend 经 orval 重生成）。测试：
+`integration/agent_skill_binding_test.go` 8 用例（fresh/upgrade-path/归属与名称唯一/binding 不变量/§17 §18 权威读缝
+确定性读取 + CRUD/auth/binding lifecycle/cross-workspace/soft-deleted）全通过（真实 PostgreSQL）。门禁 `go build`/
+`go vet`/`go test ./internal/... ./cmd/...`（仅 `cmd/devsetup` 的 Windows 文件权限既有失败，与本次无关）/`golangci-lint`/
+`git diff --check` 全通过。**Step 5B（Execution snapshot）对 `AgentSkillBinding` 的依赖已解除**，但 Execution snapshot
+本体仍未实现。**仍未实现**：Execution/Attempt/ExecutionSkillBinding / RetrievalCapability / Node 交付 / Agent 看板 UI。
+
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
 | `skills`（可变业务资源） | ✅ 持久化 | `workspace_id → collab_workspaces`，`skill_immutable` trigger 禁止跨 Workspace 原地移动；active `(workspace_id, canonical_name)` 部分唯一索引，软删除释放名称 |
@@ -292,11 +385,11 @@ Storage provider / `RetrievalCapability` / Node 交付 / Skills 看板 UI / Agen
 | **SKILL.md metadata contract（frontmatter / name / canonical_name）** | ✅ **IMPLEMENTED（Step 2C）** | ADR `20260927-skill-md-metadata-contract.md`（`proposed`）落地为 `internal/skillmeta`：`canonical_name = ASCII lowercase(TrimSpace(name))` 唯一变换、`name` 必填且必须是 YAML string（ASCII `[A-Za-z0-9._-]+`、不以 `.` 开头、≤ 200 bytes）、`description` 可选（string、≤ 4096 bytes）、重复 key 与非法 YAML fail closed、未知字段不透明；解析器归业务 metadata 层 `internal/skillmeta`，`internal/skillpkg` 保持冻结不解析 name |
 | **上传 HTTP API / directory·archive source adapter** | ✅ **IMPLEMENTED（Step 2C.1 + 3B）** | source adapter（`internal/skillsource`：zip/tar 解码 + `SKILL.md` discovery）已由 Step 2C.1 落地；公共上传 API 已由 Step 3B 落地（ADR `20260927-public-upload-api-contract.md`：`POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports`、multipart 单 archive、`source_kind∈{zip,tar}`、route-local 256 MiB / 其余路由 64 KiB、双凭证 + workspace owner/admin 授权、saga 幂等语义、200 部分成功 envelope、schema NONE）；saga 接受 caller 提供的 `Files` 或经 `IngestSource` 喂入的 `PreparedCandidate` |
 | **Object Storage 抽象（identity / key / write / reconcile）** | ✅ **IMPLEMENTED（Step 2B）** | ADR `20260927-object-storage-abstraction.md` 冻结的语义已落地为代码（`internal/skillstore`）：三层 identity 分离、`package_digest`、object key `skills/<format>/v<n>/<algo>/<package_digest>`（`Locator`）、最小 `ObjectStore` port（`PutImmutable`/`Stat`/`Get`）、create-only、五值结果分类（`error != nil` 不算分类）、按 `object_locator` probe 的 `Reconcile`、`MISMATCH` fail closed、crash adopt；`internal/skillstore/fakestore` 内存测试替身覆盖全部失败模式。**仍无**生产 provider、无 SDK 依赖、无配置键、无上传 HTTP API、无 schema 变更（`0015_skills.sql` 未修改） |
-| **Object Storage 写入（saga 驱动 port）** | ✅ **IMPLEMENTED（Step 2C）** | 不可变包字节经 `Store.SkillsObjectStore` 的 `PutImmutable`/`Reconcile` 写入对象存储（D8），完全在 DB 事务外；集成测试经内存 fakestore 写入并验证真实 package bytes；DB 事务内不做对象存储副作用。生产 provider 属后续步骤 |
-| **Object Storage signed URL / RetrievalCapability** | ❌ NOT IMPLEMENTED | 读取侧（capability、Node data plane）不在 Step 2B.0 范围；signed RetrievalCapability（D30）属 bearer credential，永不持久化/记录 |
+| **Object Storage 写入（saga 驱动 port）** | ✅ **IMPLEMENTED（Step 2C）** | 不可变包字节经 `Store.SkillsObjectStore` 的 `PutImmutable`/`Reconcile` 写入对象存储（D8），完全在 DB 事务外；集成测试经内存 fakestore 写入并验证真实 package bytes；DB 事务内不做对象存储副作用。**生产 provider 已由 Step 4B 落地**（`internal/skillstore/s3store`，`storage` 段存在且合法时由 `cmd/server` 注入，缺失则 nil → `object_store_unavailable`） |
+| **Object Storage signed URL / RetrievalCapability** | ❌ NOT IMPLEMENTED（契约已由 Step 5A 冻结，仅设计） | 读取侧契约由 `specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md` 闭合；capability mint/refresh 与 Node data plane 的**实现 NOT started**；signed RetrievalCapability 属 bearer credential，永不持久化/记录 |
 | **Skills 前端看板** | ❌ NOT IMPLEMENTED | 无 UI |
-| **AgentSkillBinding / ExecutionSkillBinding** | ❌ NOT IMPLEMENTED | 本步明确排除 |
-| **执行快照 / RetrievalCapability / Controller 交付 / Node 缓存投影 / AgentRuntimeAdapter / READY-before-spawn** | ❌ NOT IMPLEMENTED | 均为后续执行链路步骤；signed RetrievalCapability（D30）属 bearer credential，永不持久化/记录 |
+| **AgentSkillBinding / ExecutionSkillBinding** | 🚧 **AgentSkillBinding 已实现（Step 4B）**；ExecutionSkillBinding 仍 NOT IMPLEMENTED | `agents`/`agent_skill_bindings` 权威模型由 `specs/decisions/cloud/agent/0-agent-skill-binding.md` 闭合并落地为 migration `0017` + `internal/core/agents.go`（CRUD + binding lifecycle + `enabledAgentSkillBindings` 读缝）；ExecutionSkillBinding 由 `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md` 闭合（仅设计），实现属 Phase 5 |
+| **执行快照 / RetrievalCapability / Controller 交付 / Node 缓存投影 / AgentRuntimeAdapter / READY-before-spawn** | ❌ NOT IMPLEMENTED（RetrievalCapability 契约已由 Step 5A 冻结；执行快照契约已由 Step 4A 修订） | RetrievalCapability 契约已冻结（`0-skill-retrieval-capability.md` + `0-skill-materialization-and-readiness.md`，仅设计）；执行快照 ADR `20260927-execution-skill-snapshot.md` 已删除 explicit-skill-id fallback、冻结「准入只读 durable AgentSkillBinding」；实现均属后续执行链路步骤；signed RetrievalCapability 属 bearer credential，永不持久化/记录 |
 
 ## Issue 看板（迁移自 Multica）
 
@@ -517,7 +610,11 @@ vite 代理 `/auth,/api,/healthz` → :8081）。与 `cmd/demo-issue-board-web`�
 | 最近 | **Cloud Skills Ingestion Saga 实现（Phase 3 / Step 2C）**（`internal/skillmeta` 解析器 + `0016_skill_ingestion_idempotency.sql` forward migration（`canonical_name`/`request_fingerprint`/`activation_outcome` + 唯一索引，`0015` 不改）+ `internal/core` 的 `Store.IngestSkill`/`IngestSkills` journal-first saga（TX #1 → 事务外 `PutImmutable`/`Reconcile` → TX #2 + activation CAS；batch partial-success；client-driven continuation）；11 个集成用例全通过。**无**上传 HTTP API / 生产 provider / `RetrievalCapability` / Node 交付） |
 | 最近 | **Cloud Skills Source Intake 实现（Phase 3 / Step 2C.1）**（`internal/skillsource` directory / ZIP / 未压缩 TAR 摄取 + source 级安全校验（复用 `skillpkg.ValidatePath`）+ 精确 `SKILL.md` candidate 发现（root candidate owns 整树 / nested root 与 duplicate `canonical_name` 整 source 拒绝）+ invalid metadata → `PreparationFailure`；`PreparedSourceResult` 经 `core.Store.IngestSource` 喂入既有 `IngestSkills` saga；无 schema 变更；source adapter 单测 + 6 个真实 PostgreSQL 集成用例全通过） |
 | 最近 | **Cloud Skills Public Upload API Contract 冻结（Phase 4 / Step 3A，仅设计）**（ADR `20260927-public-upload-api-contract.md`：`POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports`（space-scoped，`spaceId`=saga `workspace_id`）；multipart 单 archive part、`source_kind∈{zip,tar}` 显式、directory 由客户端打包；request 字段白名单 + 禁传 canonical_name/digest/locator/revision_id；`Idempotency-Key` = saga 幂等 namespace；200 部分成功 envelope + `400 source_*` source structural failure；replay/continuation 沿用 saga；上传预算 ≤ 2 GiB（产品上限 256 MiB）、buffering ephemeral-only；schema NONE（`0015`/`0016` 不变）；**实现 NOT started**） |
-| 下一步 | **3C**（Issue Detail & Collaboration UI）；**Issue Workspace Scoping**（`issues.space_id`）；Agent / Team / Workflow / MCP / Skill Workspace Scoping；生产 Substrate / 看板分页与全文搜索 / 实时推送；真实 Agent/Team/Workflow/AI provider（BLOCKED ON EXTERNAL DESIGN）；**Cloud Skills 后续切片**（上传 HTTP API 契约已冻结·实现未开始 / 生产 Object Storage provider / `RetrievalCapability` / Node 交付，均未实现） |
+| 最近 | **Cloud Skills 生产 Object Storage Provider 设计冻结（Phase 3 / Step 4A，仅设计）**（ADR `20260927-production-object-storage-provider.md`：审计确认仓库无既有对象存储约定 → 选单一 S3-compatible provider（不默认 AWS）+ 唯一生产实现 `aws-sdk-go-v2`/`service/s3`；`PutImmutable` create-only = 原生条件 `PutObject(IfNoneMatch="*")`（412 = `PutAlreadyExists`，禁止 HEAD-then-PUT TOCTOU）；V1 单次原子 PUT、不启用 multipart；port 保持 `[]byte` 全缓冲、无放大；冻结错误 taxonomy 与五值映射、connect 5s/request 30s、`storage` 配置段（bucket/region/endpoint/path_style/credential_mode/credentials_file/tls.verify/ca_file/allow_insecure_http/timeouts）、凭证仅部署平台机制、TLS 默认 HTTPS+校验、integrity = SHA256+Decode+TreeDigest、启动 fail-fast/nil 降级；schema NONE（`0015`/`0016` 不变）；**生产 provider 实现 NOT started**） |
+| 最近 | **Cloud Skills 生产 Object Storage Provider 实现（Phase 3 / Step 4B）**（`internal/skillstore/s3store` adapter + `internal/config` `storage` 段 + `cmd/server` 装配：`PutImmutable` = 单次 `PutObject(IfNoneMatch="*")`、`Stat` = HEAD、`Get` = 有界读；错误分类经 `*smithyhttp.ResponseError` 状态码 → 五值结果、原始 SDK 错误绝不跨 port；connect 5s/request 30s + `http.DefaultTransport.Clone()` + `RetryMaxAttempts:3`；凭证三模式 environment/shared_credentials_file/workload_identity；`storage` 缺失→nil、存在但非法→fail fast；依赖仅 `aws-sdk-go-v2` + `service/s3` + `config` + `credentials`；`s3store_test.go`（fake-`api` 矩阵 + 真实 SDK `httptest` 端到端 412→`PutAlreadyExists`）+ `storage_test.go`；`go build`/`go vet`/`go test ./internal/... ./cmd/...`/`golangci-lint`/`git diff --check` 全通过；改动 uncommitted；**未做**：`RetrievalCapability` / Node 交付 / Skills 看板 / Agent·Execution 绑定 / GC / MinIO fixture / 真实 provider CI） |
+| 最近 | **Cloud Skills RetrievalCapability 契约闭合（Phase 6 / Step 5A，仅设计）**（`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md` + `specs/decisions/node/agent-runtime/0-skill-materialization-and-readiness.md` 从 `cloud/skills/` 迁到规范化的 Controller/Node 叶子域并闭合遗留开放问题；镜像测试用例迁到 `test-cases/controller/skill-delivery/` 与 `test-cases/node/agent-runtime/`；冻结：仅对已冻结进 `ExecutionSkillBinding` 的 revision 签发（绝不重解析 `Skill.current_revision_id`）、单一 immutable object 仅 GET、short-lived signed HTTPS GET URL（bearer credential、vendor-neutral）、TTL 默认 300s/硬上限 900s（`expires_at` 显式下发）、refresh 同 revision、capability 永不 durable/日志（redaction）、Controller 协调+转发不代理 bytes（data plane Node→Object Storage 直连）、`ObjectStore` port 不变 + 新增 `RetrievalCapabilityIssuer` 边界（`object_locator` 保持逻辑 key）、fencing 不吊销已签发 bearer URL + V1 撤销 = credential 过期、9 类失败分类、缺失对象签发前不 Stat/HEAD → Node 404 fail closed；schema NONE；**实现 NOT started**） |
+| 最近 | **Cloud Skills Minimal Agent & AgentSkillBinding 实现（Phase 4 / Step 4B）**（`specs/decisions/cloud/agent/0-agent-skill-binding.md` 冻结的最小 durable 权威模型落地为 migration `0017_agents_and_skill_bindings.sql`（`agents` + `agent_skill_bindings`，`0015`/`0016` 不改）+ `internal/core/agents.go`（Agent CRUD + binding list/attach/enable-disable/detach + `enabledAgentSkillBindings` 读缝，按 `canonical_name` then `skill_id` 确定性排序、不解析 revision/digest/locator）；9 个 workspace-scoped 端点（`/agents[/:agentId[/skills[/:skillId]]]`）；授权复用 `workspaceRole`（非成员 404 / member 写 403 / 删除 creator 或 owner/admin）+ attach 同 Workspace/未软删；无任何 Execution/Attempt/capability/locator 字段；contract/OpenAPI/frontend 同步；`integration/agent_skill_binding_test.go` 8 用例（fresh/upgrade/归属与名称唯一/binding 不变量/§17 §18 权威读缝/CRUD+auth/binding lifecycle/cross-workspace+soft-deleted）全通过；`go build`/`go vet`/`go test ./internal/... ./cmd/...`/`golangci-lint`/`git diff --check` 全通过（仅 `cmd/devsetup` Windows 文件权限既有失败）；**ExecutionSnapshot（Phase 5）对 `AgentSkillBinding` 依赖已解除**但本体未实现） |
+| 下一步 | **3C**（Issue Detail & Collaboration UI）；**Issue Workspace Scoping**（`issues.space_id`）；Agent / Team / Workflow / MCP / Skill Workspace Scoping；生产 Substrate / 看板分页与全文搜索 / 实时推送；真实 Agent/Team/Workflow/AI provider（BLOCKED ON EXTERNAL DESIGN）；**Cloud Skills 后续切片**（`RetrievalCapability` / Node 交付实现（契约已由 Step 5A 冻结）/ Skills 看板 UI / ExecutionSkillBinding / GC·retention / MinIO dev fixture / 真实 provider CI，均未实现） |
 
 > 想看每个功能对应的接口和表，去 [../agent/api-reference.md](../agent/api-reference.md) 和
 > [../agent/database.md](../agent/database.md)。想看迁移的完整决策记录，去

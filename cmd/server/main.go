@@ -23,6 +23,8 @@ import (
 	"github.com/wanglongan587/cloud/internal/core"
 	"github.com/wanglongan587/cloud/internal/logger"
 	"github.com/wanglongan587/cloud/internal/repository"
+	"github.com/wanglongan587/cloud/internal/skillstore"
+	"github.com/wanglongan587/cloud/internal/skillstore/s3store"
 )
 
 func main() {
@@ -44,6 +46,39 @@ func configureCollaboration(store *core.Store, developmentFixtures bool, log *za
 	}
 	collab.WireDevelopmentFixtures(store)
 	log.Warn("development collaboration fixtures enabled: Agent/Team/Workflow targets served from in-memory fixtures (development-only; production must leave collaboration.development_fixtures false)")
+}
+
+// wireObjectStore translates the resolved `storage` section into the production
+// S3-compatible ObjectStore and returns it, or nil when the section is absent (the
+// saga then reports object_store_unavailable). An invalid section was already
+// rejected by config.Load, so a non-nil error here is a construction failure
+// (unreadable CA file, unusable credentials) and must fail startup.
+func wireObjectStore(ctx context.Context, sc *config.StorageConfig, log *zap.Logger) (skillstore.ObjectStore, error) {
+	if sc == nil {
+		log.Info("object storage not configured; Skill uploads unavailable")
+		return nil, nil
+	}
+	verify := true
+	if sc.TLS.Verify != nil {
+		verify = *sc.TLS.Verify
+	}
+	store, err := s3store.New(ctx, s3store.Config{
+		Region:             sc.Region,
+		Bucket:             sc.Bucket,
+		Endpoint:           sc.Endpoint,
+		PathStyle:          sc.PathStyle,
+		CredentialMode:     sc.CredentialMode,
+		CredentialsFile:    sc.CredentialsFile,
+		InsecureSkipVerify: !verify,
+		CAFile:             sc.TLS.CAFile,
+		ConnectTimeout:     sc.Timeouts.Connect,
+		RequestTimeout:     sc.Timeouts.Request,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure object storage: %w", err)
+	}
+	log.Info("object storage configured", zap.String("provider", sc.Provider), zap.String("bucket", sc.Bucket))
+	return store, nil
 }
 
 func run() (runErr error) {
@@ -69,6 +104,9 @@ func run() (runErr error) {
 		return e
 	}
 	defer func() { runErr = errors.Join(runErr, store.Pool.Close()) }()
+	if store.SkillsObjectStore, e = wireObjectStore(ctx, cfg.Storage, log); e != nil {
+		return e
+	}
 	configureCollaboration(store, cfg.Collaboration.DevelopmentFixtures, log)
 	if e := store.CheckSchema(ctx); e != nil {
 		return e

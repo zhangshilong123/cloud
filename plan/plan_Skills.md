@@ -1543,6 +1543,82 @@ contract/OpenAPI/frontend sync — with **no schema change**.
 - [ ] Production Object Storage provider / `RetrievalCapability` / Node delivery / Skills board UI /
       AgentSkillBinding / ExecutionSkillBinding remain NOT implemented (later phases).
 
+### Step 4A Production Object Storage provider — FROZEN (design only)
+
+Status: **provider contract frozen; production provider implementation NOT started**. The production
+Object Storage gap is closed at the design level by ADR
+`specs/decisions/cloud/skills/20260927-production-object-storage-provider.md` (status `proposed`). The
+audit found **no** existing authoritative object-storage provider or deployment convention anywhere in the
+repo (no S3/AWS/MinIO/GCS/Azure SDK in `go.mod`; `compose.yaml`/CI run only PostgreSQL; no Helm/K8s; no
+`storage` config section; no storage references in `scripts/`/`Learn/`/`configs/`/`Taskfile.yml`), so a V1
+provider contract is chosen — **single S3-compatible provider, not AWS by default** — with one production
+implementation (`aws-sdk-go-v2` + `service/s3`, dependency added only in the implementation slice).
+
+- [x] **Provider**: single S3-compatible contract via custom `endpoint` + path-style; one production adapter.
+- [x] **`PutImmutable` create-only**: native conditional `PutObject(IfNoneMatch="*")` → `412` =
+      `PutAlreadyExists`; HEAD-then-unconditional-PUT (TOCTOU) is forbidden; no conditional-write → fail closed.
+- [x] **Multipart**: V1 uses a **single atomic PUT**, no multipart (preserves create-only atomicity; 5 GiB
+      single-PUT ceiling ≫ `MaxPackageBytes` ≈1 GiB and the 256 MiB product cap).
+- [x] **Memory**: current `ObjectStore` port keeps `[]byte` full buffering; the single PUT writes the same
+      bytes with no amplification — 256 MiB is not operationally unsafe.
+- [x] **Error mapping/taxonomy**: 200→`PutCreated`; 412→`PutAlreadyExists`; 400/403/size-reject→
+      `PutDefiniteFailurePermanent`; DNS/conn-refused/429→`PutDefiniteFailureTransient`; 5xx/post-send
+      timeout→`PutAmbiguous`. Frozen classes: not_found / already_exists / temporary / throttled /
+      unauthorized / forbidden / invalid_configuration / integrity_mismatch / ambiguous / permanent_failure;
+      raw SDK errors never leak to the domain.
+- [x] **Timeouts**: connect 5s / request 30s; every call carries caller context; no unbounded
+      `context.Background()`; no background retry worker.
+- [x] **Config**: new `storage` section (provider/bucket/region/endpoint/path_style/credential_mode/
+      credentials_file/tls.verify/ca_file/allow_insecure_http/timeouts). Bucket is single-configured; bucket
+      name never in durable state / request / workspace settings.
+- [x] **Credentials**: deployment-platform mechanisms only (environment / workload identity / shared
+      credentials file); forbidden in DB / `SkillRevision` / API response / logs.
+- [x] **TLS**: production HTTPS + cert verification (`tls.verify` default true); `allow_insecure_http`
+      default false (explicit dev/test `http://minio` only).
+- [x] **Integrity**: `SHA256 == package_digest` + `skillpkg.Decode` + `TreeDigestHex == content_digest`;
+      provider ETag is evidence, never authority.
+- [x] **Startup**: `storage` present-but-invalid → fail fast; absent → process starts, `SkillsObjectStore`
+      nil, saga returns `object_store_unavailable` (already implemented); no remote bucket probe at startup.
+- [x] **Schema impact**: NONE — `0015_skills.sql` / `0016_skill_ingestion_idempotency.sql` unchanged.
+- [ ] Production provider **implementation** (adapter + SDK dep + `cmd/server` wiring + `CLOUD_STORAGE_*`
+      binding + startup validation) is NOT started (later slice).
+
+### Step 4B Production Object Storage provider — IMPLEMENTED
+
+Status: **implemented and gated; all changes remain uncommitted**. The Step 4A contract is now a production
+adapter — new package `internal/skillstore/s3store`, an `internal/config` `storage` section, and `cmd/server`
+wiring — with **no change** to the `ObjectStore` port, the schema, or the ingestion saga semantics.
+
+- [x] **Adapter** (`internal/skillstore/s3store`): implements `skillstore.ObjectStore` over
+      `aws-sdk-go-v2/service/s3`; a minimal unexported `api` seam (`*s3.Client` satisfies it) keeps tests
+      provider-free. `PutImmutable` issues exactly one `PutObject` with `IfNoneMatch: "*"` (no HEAD-then-PUT);
+      `Stat` = HEAD; `Get` = bounded read with a +1-byte oversize peek (never `io.ReadAll` unbounded).
+- [x] **Error classification**: `classify` keys off the HTTP status via `*smithyhttp.ResponseError`
+      (reachable for every non-2xx through `*smithy.OperationError`), then DNS / `dial`-refused → transient,
+      established-then-broken / deadline / cancel → ambiguous, unknown → ambiguous. 404→absent, 412→
+      already-exists, 429→transient, 5xx→ambiguous, other 4xx→permanent. Raw SDK errors never cross the port.
+- [x] **Timeout/transport**: connect 5s / request 30s (frozen defaults, configurable); each op derives its
+      deadline from the caller context; transport is `http.DefaultTransport.Clone()` (no global mutation);
+      `RetryMaxAttempts: 3` (bounded transport retry only).
+- [x] **Credentials**: `environment` (static from `AWS_*`), `shared_credentials_file`, `workload_identity`
+      (default chain) — resolved in-adapter, never persisted or logged.
+- [x] **Config** (`internal/config` `storage` section + `CLOUD_STORAGE_*`): pointer `StorageConfig` (nil =
+      absent → `SkillsObjectStore` nil); `applyDefaults` (credential_mode→environment, tls.verify→true,
+      timeouts→5s/30s) then `Validate` (provider=="s3", bucket/region required, endpoint scheme + http-vs-
+      allow_insecure_http, credential_mode set, credentials_file required, verify=false ⊥ ca_file, timeouts
+      ≥0). `configs/config.yaml` carries a commented sample.
+- [x] **Wiring**: `cmd/server.wireObjectStore` translates `storage` → `s3store.Config` and assigns
+      `store.SkillsObjectStore`; present-but-invalid fails startup, absent → nil (unchanged
+      `object_store_unavailable` path).
+- [x] **Tests**: `s3store_test.go` (fake-`api` outcome matrix, `If-None-Match: *`/body passthrough, bounded
+      Get, `New` validation) + a real-SDK `httptest` end-to-end (conditional PUT, 412→`PutAlreadyExists`);
+      `internal/config/storage_test.go` (nil-when-absent, defaults, full parse, reject matrix, http-with-
+      allow, `CLOUD_STORAGE_BUCKET` env). Gates: `go build`/`go vet`/`go test ./internal/... ./cmd/...`/
+      `golangci-lint`/`git diff --check` all pass (only pre-existing `cmd/devsetup` Windows file-mode
+      failure, unrelated).
+- [ ] **Not done**: `RetrievalCapability`, Node delivery, Skills board, Agent/Execution binding, GC/retention,
+      MinIO dev fixture, real-provider CI — all later slices.
+
 ## Phase 4 — Public API / Skills board backend
 
 - Workspace-scoped CRUD/import;
@@ -1551,7 +1627,85 @@ contract/OpenAPI/frontend sync — with **no schema change**.
 - idempotency/version behavior;
 - generated contracts/OpenAPI/client.
 
+### Step 4A Agent/AgentSkillBinding contract — FROZEN (design only)
+
+Status: **contract frozen; implementation NOT started; all changes remain uncommitted**. The minimal durable
+`Agent` + `AgentSkillBinding` authority model is closed by
+`specs/decisions/cloud/agent/0-agent-skill-binding.md` (status `proposed`). **No implementation code, no schema change.**
+The Execution snapshot ADR `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md` was revised to consume
+durable `AgentSkillBinding` only — its temporary explicit-skill-id admission fallback was removed and caller-supplied
+`skill_id[]` is now forbidden.
+
+- [x] **Agent ownership**: durable `agents` resource owned by one Collaboration Workspace (`collab_workspaces`),
+      never Runtime `workspaces`/`projects`.
+- [x] **AgentSkillBinding**: references `skill_id` (Skill identity), never `skill_revision_id`/digest/locator;
+      `PRIMARY KEY(agent_id, skill_id)` = at most one binding.
+- [x] **Mutation semantics**: add/enable/disable/remove + optimistic version (428/409) + Idempotency-Key.
+- [x] **Soft-delete**: historical `ExecutionSkillBinding` remains valid; future admission excludes soft-deleted
+      Skill; soft-deleted Agent denies new executions.
+- [x] **Snapshot authority**: Execution request carries `agent_id` only, never Skill IDs; admission reads durable
+      `AgentSkillBinding` only.
+- [x] **Authorization**: reuses `collab_workspace_members` roles (owner/admin mutate; member read; non-member 404).
+- [x] **ActorRef**: `agents.id` maps to `ActorRef{agent}`; taxonomy unchanged; `CollaborationDirectory` stays unwired.
+- [x] **Schema impact**: design-only (`agents` + `agent_skill_bindings` forward migration); NO migration written.
+- [x] **Implementation** (Agent CRUD/binding API, migration) — delivered in Step 4B below.
+
+### Step 4B Agent & AgentSkillBinding — IMPLEMENTED
+
+Status: **implemented**. The minimal durable `Agent` + `AgentSkillBinding` authority frozen by
+`specs/decisions/cloud/agent/0-agent-skill-binding.md` is now code: forward migration
+`0017_agents_and_skill_bindings.sql`, `internal/core/agents.go`, and the workspace-scoped public API + generated
+contract below. It resolves **only** durable `AgentSkillBinding` as the Execution selection authority (ADR D8);
+it implements **no** Execution/Attempt/ExecutionSkillBinding/capability/locator fields (ADR D13/D14).
+
+**Repo-consistent API contract** (recorded per plan §13; endpoint paths follow the existing
+`/tenants/:tid/spaces/:spaceId/...` workspace-scoped convention of `0015`/`spaces`):
+
+| Method | Path (under `/api/v1/tenants/:tid/spaces/:spaceId`) | Body fields | Auth | Idempotency |
+| --- | --- | --- | --- | --- |
+| GET | `/agents` | — | member+ | — |
+| POST | `/agents` | `name` | owner/admin | Idempotency-Key |
+| GET | `/agents/:agentId` | — | member+ | — |
+| PATCH | `/agents/:agentId` | `name`,`status`,`version` | owner/admin | version 428/409 |
+| DELETE | `/agents/:agentId` | `version` | creator or owner/admin | Idempotency-Key + version |
+| GET | `/agents/:agentId/skills` | — | member+ | — |
+| POST | `/agents/:agentId/skills` | `skillId` | owner/admin | Idempotency-Key |
+| PUT | `/agents/:agentId/skills/:skillId` | `enabled`,`version` | owner/admin | version 428/409 |
+| DELETE | `/agents/:agentId/skills/:skillId` | — | owner/admin | Idempotency-Key (idempotent detach) |
+
+Authorization reuses `workspaceRole` (`internal/core/space_permission.go`): non-member → `404 not_found` (no
+existence leak, ADR D11); member-but-not-admin mutation → `403 workspace_admin_required`; delete uses
+`workspaceCanDelete` (creator or owner/admin, ADR D11). Attach enforces same-workspace
+(`agent.workspace_id == skill.workspace_id`) and not-soft-deleted (ADR D4); a binding to a Skill with no
+`current_revision_id` is permitted (intent vs availability, ADR D4) and the failure is deferred to Execution
+admission (`skill_revision_not_available`, not implemented here).
+
+Binding mutation semantics (ADR D5): attach INSERT `enabled=true` (duplicate `(agent_id,skill_id)` → `409
+binding_exists`; same idempotency key replays); enable/disable = `PUT {enabled,version}` (missing `428`, mismatch
+`409`); detach = DELETE (absent → `404 binding_not_found`; same idempotency key replays). Soft-delete keeps binding
+rows; the selection helper below excludes soft-deleted Skills and disabled bindings.
+
+- [x] **Migration** `0017_agents_and_skill_bindings.sql`: `agents` (workspace-owned, `name` 1..128,
+      `status active|disabled`, `version`, soft `deleted_at`, `UNIQUE(workspace_id,name) WHERE deleted_at IS NULL`,
+      immutable-ownership trigger) + `agent_skill_bindings` (`PRIMARY KEY(agent_id,skill_id)`, `enabled`,
+      `version`, no `deleted_at`). `0015_skills.sql`/`0016` unchanged.
+- [x] **Core** `internal/core/agents.go`: create/read/list/patch/archive Agent; list/attach/enable-disable/detach
+      binding; plus the `enabledAgentSkillBindings` read seam (enabled bindings joined to their live Skill,
+      deterministically ordered by `canonical_name` then `skill_id`) that future Execution admission calls — it
+      resolves **no** revision/digest (ADR D8/D10/D13; not a snapshot).
+- [x] **No execution surface**: no `Execution`/`Attempt`/`ExecutionSkillBinding`, no capability/signed-URL/object
+      locator, no caller-supplied `skill_ids` anywhere in the Agent tables or API (ADR D8/D13/D14).
+- [ ] RetrievalCapability / Execution snapshot / Node delivery / Agent UI remain NOT implemented (later phases).
+
+Step 5B remains BLOCKED: the Execution snapshot (Phase 5) now has its durable `AgentSkillBinding` selection
+authority implemented above, but is itself not yet implemented.
+
 ## Phase 5 — Execution snapshot
+
+> Status: **BLOCKED** — depends on the durable `AgentSkillBinding` (Phase 4A contract frozen; Phase 4B
+> implementation now landed — the `enabledAgentSkillBindings` read seam is the selection authority). Contract is
+> `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md` (status `proposed`), revised to consume durable
+> `AgentSkillBinding` only.
 
 - resolve enabled Agent Skills at Execution creation;
 - exact revision binding;
@@ -1559,6 +1713,39 @@ contract/OpenAPI/frontend sync — with **no schema change**.
 - retry/new Attempt behavior.
 
 ## Phase 6 — Retrieval capability
+
+### Step 5A RetrievalCapability contract — FROZEN (design only)
+
+Status: **contract frozen; implementation NOT started; all changes remain uncommitted**. The
+RetrievalCapability contract is closed by
+`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md` (status `proposed`) and its Node-side
+coherence contract `specs/decisions/node/agent-runtime/0-skill-materialization-and-readiness.md` (status `proposed`),
+with mirror test-cases under `specs/test-cases/controller/skill-delivery/` and `specs/test-cases/node/agent-runtime/`.
+Step 5A moves these two ADRs (previously registered under `cloud/skills/`) to their canonical Controller/Node leaf
+domains and closes the remaining open questions. **No implementation code, no schema change.**
+
+- [x] **Authorization basis**: capability only for revisions frozen into the Execution `ExecutionSkillBinding`;
+      never re-resolve `Skill.current_revision_id` at claim/dispatch time.
+- [x] **Scope**: one immutable object, GET only; no bucket/prefix/workspace-wide or arbitrary-key access.
+- [x] **Representation**: short-lived signed HTTPS GET URL (bearer credential, vendor-neutral, not S3-named).
+- [x] **TTL**: default 300s, hard ceiling 900s; `expires_at` carried explicitly; covers dispatch + Node scheduling
+      + retrieval + clock skew + 1–2 refresh-retry cycles.
+- [x] **Refresh**: same Execution + Attempt + frozen revision → new capability; credential changes, not
+      revision/locator/binding.
+- [x] **Persistence/logging**: capability is never durable business state and never logged (redaction).
+- [x] **Controller**: coordinates + relays; does not proxy bytes; data plane is Node→Object Storage direct.
+- [x] **Provider boundary**: `ObjectStore` port unchanged; new `RetrievalCapabilityIssuer`-style boundary;
+      `object_locator` stays a logical key, never a URL.
+- [x] **Fencing/revocation**: fencing does not revoke a minted bearer URL; V1 revocation = credential expiry only
+      (TTL is the exposure window); no immediate-revocation promise.
+- [x] **Failure taxonomy**: storage_not_configured / revision_not_bound / attempt_not_eligible /
+      object_not_available / signing_failed / invalid_locator / expired_or_retry_required / authorization_failed /
+      temporary_control_plane_failure.
+- [x] **Missing object**: no Stat-before-issuance; Node 404 → `object_not_available`, fail closed.
+- [x] **Schema impact**: NONE.
+- [ ] **Implementation** (capability mint/refresh, Node downloader/cache, READY barrier) NOT started (later slice).
+
+### Implementation (later slice)
 
 - capability mint/refresh;
 - short-lived exact-object read authorization;
