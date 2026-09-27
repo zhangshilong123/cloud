@@ -1467,6 +1467,82 @@ semantics closed by `specs/decisions/cloud/skills/20260927-source-intake-candida
 - [ ] Public upload HTTP API / production Object Storage provider / frontend / RetrievalCapability / Node
       delivery / Agent-Execution bindings remain NOT implemented (later phases).
 
+### Step 3A Public upload API contract — FROZEN (design only)
+
+Status: **API contract frozen**; implementation **NOT started**. Frozen by
+`specs/decisions/cloud/skills/20260927-public-upload-api-contract.md` (status `proposed`, design-only).
+
+- [x] **Endpoint**: `POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports` — tenant-prefixed and
+      space-scoped per repo convention (`spaceId` == the saga's `workspace_id`, i.e. `collab_workspaces.id`);
+      not the tenant-less `/api/v1/spaces/{workspace_id}/...` form.
+- [x] **Auth**: reuses Collaboration Workspace dual credentials + `workspaceRole`; import / explicit update
+      requires space owner/admin (`403 workspace_admin_required`); cross-workspace `target_skill_id` and
+      non-member space reads are `404` (no leak).
+- [x] **Transport**: `multipart/form-data` with a single archive part. `source_kind ∈ {zip, tar}` (explicit,
+      no filename/MIME/sniffing/fallback); `directory` is not a public wire kind — a client packs a local
+      directory to zip/tar first (same canonical content; `KindDirectory`/`PrepareDirectory` stay server-side).
+- [x] **Request fields**: `source_kind` + `source` (archive bytes) + optional `target_skill_id` (explicit
+      update, single-candidate source) + optional `display_name`/`summary` (new-Skill metadata). Clients must
+      not send `canonical_name`/`content_digest`/`package_digest`/`object_locator`/`revision_id`.
+- [x] **Idempotency-Key**: required header, == the saga's idempotency namespace
+      `(workspace_id, idempotency_key, canonical_name)` + `request_fingerprint`; the upload endpoint does NOT
+      write the generic `idempotency_records` row (binary body + continuation semantics).
+- [x] **Response**: `200` envelope `{sourceKind, preparationFailures[], ingestions[]}`. Source-level structural
+      failure → `400` + `source_*` code (zero ingestion rows); candidate preparation failure → per-item without
+      any Skill identity; candidate saga failure / `activation_conflict` → per-item inside the `200` envelope.
+- [x] **Partial success**: overall `200` whenever the source was structurally valid; only catastrophic DB loss
+      → `500`.
+- [x] **Replay / continuation**: same key + same fingerprint → durable per-candidate result (`replayed`) or
+      `planned`/`storing` resume (client-driven, saga D14); same key + different fingerprint → `409`.
+- [x] **Limits**: upload budget ≤ 2 GiB (provisional product cap 256 MiB); archive/entry/expanded/candidate
+      limits inherit `skillsource.Limits`; per-file/path limits inherit `skillpkg.Limits`; buffering is
+      ephemeral-only (no durable staging). `413 upload_too_large` on budget breach.
+- [x] **Schema impact**: NONE — `0015_skills.sql` / `0016_skill_ingestion_idempotency.sql` unchanged; no `0017`.
+- [x] Implementation (multipart transport + router/gateway body budget + contract/OpenAPI/frontend sync per
+      ADR D17) is complete — see Step 3B below.
+
+### Step 3B Public upload API — IMPLEMENTED
+
+Status: **implemented**. The frozen Step 3A contract is realized end-to-end: multipart transport, route-local
+body budget, dual-credential authorization, saga idempotency, the `200` envelope, and the
+contract/OpenAPI/frontend sync — with **no schema change**.
+
+- [x] **Route + transport**: `POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports` registered in
+      `router.Routes()` and handled by a dedicated `uploadSkillSource` (`internal/api/router/skill_upload.go`);
+      `multipart/form-data` with a single `source` file part and a strict text-field allowlist
+      (`source_kind`/`target_skill_id`/`display_name`/`summary`). Unknown or duplicate fields — including the
+      forbidden `canonical_name`/`content_digest`/`package_digest`/`object_locator`/`revision_id` — are rejected
+      (`unknown_field`/`duplicate_field`); `source_kind` is explicit and maps to `skillsource.SourceKind`, never
+      filename/MIME/sniffed.
+- [x] **Body budget**: route-local 256 MiB ceiling (`skillsUploadBudget`, `413 upload_too_large`), ephemeral-only
+      (no durable staging, never read the full oversized body into memory). Every other route keeps the 64 KiB JSON
+      ceiling; the Gateway is route-aware (`requestBodyLimit`/`isSkillsUploadPath` exempt only the 8-segment
+      `skills/imports` shape) and the global `maxBodyBytes` is never widened.
+- [x] **Authorization**: dual credentials (gateway service role + `X-Ora-User-Token` with `user.Caller ==
+      service.Subject`) → `store.ResolveIdentity` → `core.Store.IngestSource`. Whole-request checks fail fast with
+      zero side effects: non-member → `404 not_found`; member but not owner/admin → `403 workspace_admin_required`;
+      `target_skill_id` resolving outside the space or absent → `404 not_found` (no leak); `target_skill_id` with
+      more than one candidate → `400 single_candidate_required`. These are HTTP-level rejections, never per-item
+      `errorCode`s inside a `200` envelope.
+- [x] **Idempotency**: `Idempotency-Key` required; == the saga namespace. Same key + same fingerprint → replay /
+      continuation; same key + different fingerprint → `409 idempotency_conflict`. `IngestSkills` now propagates
+      `*Fault`s (auth/conflict/scope) instead of folding them into per-candidate `errorCode`s.
+- [x] **Envelope**: `200 {sourceKind, preparationFailures[], ingestions[]}`; source structural failure → `400
+      source_*` (zero rows); partial success → overall `200`; `activation_conflict` stays the `activation` field,
+      never an `errorCode`.
+- [x] **Contract sync**: `internal/contract/openapi.go` (`SourceUploadResult`/`SourcePreparationFailure`/
+      `SourceIngestionItem` schemas, multipart request body, `413` description); `api/openapi.json` regenerated
+      (`go run ./cmd/openapi`) and gated by `TestPublishedOpenAPIIsValidAndCurrent`; frontend regenerated (orval)
+      with `sourceKind`/`preparationFailures`/`ingestions` types — no Skills board UI.
+- [x] **Schema impact**: NONE — `0015_skills.sql` / `0016_skill_ingestion_idempotency.sql` unchanged; no `0017`.
+- [x] **Tests**: router multipart-strictness/body-budget unit tests (`internal/api/router/skill_upload_test.go`);
+      Gateway body-limit pinning unit tests (`internal/gateway/bodylimit_test.go`); E2E
+      `integration/skill_upload_test.go` (zip/tar happy path, replay, `409`, member `403` / non-member `404` /
+      cross-workspace `404`, `single_candidate_required`, partial-success mapping, fatal-source zero side effects,
+      >64 KiB acceptance).
+- [ ] Production Object Storage provider / `RetrievalCapability` / Node delivery / Skills board UI /
+      AgentSkillBinding / ExecutionSkillBinding remain NOT implemented (later phases).
+
 ## Phase 4 — Public API / Skills board backend
 
 - Workspace-scoped CRUD/import;

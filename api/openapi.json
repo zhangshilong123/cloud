@@ -1948,6 +1948,108 @@
         ],
         "type": "object"
       },
+      "SourceIngestionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "activation": {
+            "description": "activated | activation_conflict | \"\" (not committed)",
+            "type": "string"
+          },
+          "candidateRoot": {
+            "type": "string"
+          },
+          "canonicalName": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "ingestionId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "revisionId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "skillId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "state": {
+            "description": "planned | storing | verified | committed | failed | \"\" (pre-journal)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidateRoot",
+          "canonicalName",
+          "skillId",
+          "revisionId",
+          "ingestionId",
+          "state",
+          "activation",
+          "replayed",
+          "errorCode"
+        ],
+        "type": "object"
+      },
+      "SourcePreparationFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateRoot": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errorCode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidateRoot",
+          "errorCode",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "SourceUploadResult": {
+        "additionalProperties": false,
+        "properties": {
+          "ingestions": {
+            "items": {
+              "$ref": "#/components/schemas/SourceIngestionItem"
+            },
+            "type": "array"
+          },
+          "preparationFailures": {
+            "items": {
+              "$ref": "#/components/schemas/SourcePreparationFailure"
+            },
+            "type": "array"
+          },
+          "sourceKind": {
+            "enum": [
+              "zip",
+              "tar"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceKind",
+          "preparationFailures",
+          "ingestions"
+        ],
+        "type": "object"
+      },
       "Space": {
         "additionalProperties": false,
         "properties": {
@@ -13963,6 +14065,195 @@
           }
         ],
         "summary": "POST /api/v1/tenants/:tid/spaces/:spaceId/projects",
+        "tags": [
+          "spaces"
+        ]
+      }
+    },
+    "/api/v1/tenants/{tid}/spaces/{spaceId}/skills/imports": {
+      "post": {
+        "description": "Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Imports a Skill source as one archive (zip or uncompressed tar) via multipart/form-data. source_kind selects the decoder (no filename/MIME sniffing); the archive is decoded into deterministic candidates and ingested through the journal-first saga under the Idempotency-Key as the saga idempotency namespace (same key + same fingerprint replays or resumes; a different fingerprint is 409). Requires space owner/admin; a non-member or a cross-space target_skill_id is 404 not_found. Returns a 200 envelope with preparationFailures and per-candidate ingestions; a source-level structural failure (zero candidates) is 400 with a source_* code. The body budget is 256 MiB (413 upload_too_large).",
+        "operationId": "post_api_v1_tenants_tid_spaces_spaceId_skills_imports",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tid",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "spaceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Saga idempotency namespace (workspace_id, idempotency_key, canonical_name). Same key and same fingerprint replays or resumes; a different fingerprint is 409 idempotency_conflict. Not the generic idempotency_records replay.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "display_name": {
+                    "maxLength": 200,
+                    "type": "string"
+                  },
+                  "source": {
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "source_kind": {
+                    "enum": [
+                      "zip",
+                      "tar"
+                    ],
+                    "type": "string"
+                  },
+                  "summary": {
+                    "maxLength": 4096,
+                    "type": "string"
+                  },
+                  "target_skill_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source_kind",
+                  "source"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceUploadResult"
+                }
+              }
+            },
+            "description": "Successful command or resource response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid JSON/field/input, missing idempotency key, invalid pagination or evidence"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid, forged, expired, wrong-audience, untrusted, or caller-mismatched credential"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Disabled user, inactive/missing membership, wrong service role, or admin required"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Resource absent or outside authorized tenant/owner scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Upload exceeds the 256 MiB source budget"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Version precondition required"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Internal error; no SQL or secret details are exposed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "External capability not wired in this deployment (a port is Unavailable), e.g. form_descriptor_unavailable or assist_unavailable"
+          }
+        },
+        "security": [
+          {
+            "serviceCredential": [],
+            "userCredential": []
+          }
+        ],
+        "summary": "POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports",
         "tags": [
           "spaces"
         ]

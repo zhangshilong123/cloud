@@ -234,6 +234,29 @@ member of W`. Concretely:
   (`creator OR workspace owner/admin`), so a member who created a project sees their own delete button;
   the backend delete authorization is unchanged.
 
+## Skills source upload
+
+`POST /api/v1/tenants/{tid}/spaces/{sid}/skills/imports` — the single public route for importing a Skill
+source (Step 3B). It is **not** part of the generic JSON loop: it accepts `multipart/form-data` under a
+route-local 256 MiB budget (every other route keeps the 64 KiB JSON ceiling; the Gateway exempts only
+this 8-segment path).
+
+| Field | Kind | Notes |
+| --- | --- | --- |
+| `source_kind`* | text | `zip` \| `tar` (explicit; no filename/MIME/sniffing) |
+| `source`* | file | one archive part |
+| `target_skill_id` | text | optional explicit update; requires exactly one candidate, else 400 `single_candidate_required`; cross-workspace/absent → 404 `not_found` |
+| `display_name` | text | optional, ≤200; written only to new Skills |
+| `summary` | text | optional, ≤4096; written only to new Skills |
+
+Headers: 🔑 `Idempotency-Key` (required; == the saga namespace). Auth: service-JWT (gateway) + user-JWT +
+**workspace owner/admin** (`403 workspace_admin_required`); non-member → `404 not_found`. `200` response:
+`{sourceKind, preparationFailures:[{candidateRoot,errorCode,detail}], ingestions:[{candidateRoot,
+canonicalName,skillId,revisionId,ingestionId,state,activation,replayed,errorCode}]}`. Source structural
+failure → `400 source_*` (zero rows); over budget → `413 upload_too_large`; same key + different
+fingerprint → `409 idempotency_conflict`. See
+`specs/decisions/cloud/skills/20260927-public-upload-api-contract.md`.
+
 ## Internal / control API (`/internal/v1`)
 
 Service-only (no user token except where noted). `epoch` = controller fencing. See

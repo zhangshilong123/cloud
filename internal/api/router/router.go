@@ -102,6 +102,7 @@ func Routes() []Route {
 		{"DELETE", "/api/v1/tenants/:tid/spaces/:spaceId/members/:uid", "", []string{"version"}},
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/projects", "", nil},
 		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/projects", "", []string{"name", "repositoryUrl", "defaultBranch", "credentialRefId"}},
+		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/skills/imports", "", []string{"source_kind", "source", "target_skill_id", "display_name", "summary"}},
 		{"POST", "/internal/v1/access", "access", []string{"tenantId", "workspaceId", "action", "epoch"}},
 		{"POST", "/internal/v1/admissions", "admit", []string{"tenantId", "workspaceId", "action", "ticketId", "kind", "epoch"}},
 		{"POST", "/internal/v1/controller-lease/acquire", "lease_acquire", []string{}},
@@ -143,6 +144,9 @@ func New(store *core.Store, auth *core.Authenticator, log *zap.Logger) *gin.Engi
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 	for _, route := range Routes() {
+		if route.Path == skillsUploadPath {
+			continue // the multipart upload has its own dedicated handler and body budget
+		}
 		r.Handle(route.Method, route.Path, func(c *gin.Context) {
 			raw, ok := bearerToken(c.GetHeader("Authorization"))
 			if !ok {
@@ -232,6 +236,7 @@ func New(store *core.Store, auth *core.Authenticator, log *zap.Logger) *gin.Engi
 			c.JSON(status, out)
 		})
 	}
+	r.POST(skillsUploadPath, func(c *gin.Context) { uploadSkillSource(store, auth, log, c) })
 	r.GET("/api/v1/tenants/:tid/spaces/:spaceId/events", func(c *gin.Context) { sseEvents(store, auth, c) })
 	r.NoRoute(func(c *gin.Context) { failure(c, &core.Fault{Code: "not_found", Status: 404, Params: core.Object{}}) })
 	return r

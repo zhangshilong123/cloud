@@ -6,15 +6,15 @@
 
 ## Module map
 
-- [core](core/README.en.md) is the authoritative domain core, owning business state machines, transaction boundaries, database advisory locks, cryptographic authentication, and the Cloud Skill ingestion saga (`Store.IngestSkill` / `Store.IngestSkills`).
+- [core](core/README.en.md) is the authoritative domain core, owning business state machines, transaction boundaries, database advisory locks, cryptographic authentication, and the Cloud Skill ingestion saga (`Store.IngestSkill` / `Store.IngestSkills`) plus the source-intake seam (`Store.IngestSource`: whole-request authorization + `target_skill_id` scoping + idempotency propagation).
   - [migrations](core/migrations/README.en.md) contains ordered, forward-only PostgreSQL schema migration scripts and checksum verification.
 - [api](api/README.en.md) is the HTTP presentation layer.
-  - [router](api/router/README.en.md) binds HTTP routes, verifies two-tier JWT credentials, parses JSON request bodies, and projects domain errors into stable contracts.
-- [gateway](gateway/README.en.md) is the public authentication boundary: PostgreSQL-backed Login Attempts and Browser Sessions, provider-neutral login orchestration, internal JWT issuance, cookie/CSRF/redirect protection, and the `/api/v1` proxy.
+  - [router](api/router/README.en.md) binds HTTP routes, verifies two-tier JWT credentials, parses JSON request bodies under a 64 KiB limit (the `POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports` multipart upload route is the exception — a dedicated handler with a route-local 256 MiB budget), and projects domain errors into stable contracts.
+- [gateway](gateway/README.en.md) is the public authentication boundary: PostgreSQL-backed Login Attempts and Browser Sessions, provider-neutral login orchestration, internal JWT issuance, cookie/CSRF/redirect protection, and the `/api/v1` proxy, applying a route-aware 64 KiB body-limit exemption for the Skills upload route (all other routes keep 64 KiB).
   - [idaas](gateway/idaas/README.en.md) is the Huawei IDaaS 2.0 (`client_secret_post`) adapter that produces a `VerifiedIdentity` with `source=huawei-corp`.
   - [github](gateway/github/README.en.md) is the GitHub OAuth App adapter that produces a `VerifiedIdentity`.
   - [devlogin](gateway/devlogin/README.en.md) is the development-only provider: a local form where any typed identity signs in, registered solely on loopback development origins.
-- [contract](contract/README.en.md) defines OpenAPI 3.0 schema models, DTO structures, and contract coverage tests.
+- [contract](contract/README.en.md) defines OpenAPI 3.0 schema models (including the Skills upload `SourceUploadResult`/`SourcePreparationFailure`/`SourceIngestionItem` and its multipart request body), DTO structures, and contract coverage tests.
 - [skillpkg](skillpkg/README.en.md) is the pure content layer for Cloud Skill canonical package v1 — canonical path validation, ManifestV1, tree digest, and `ora-skill-package` v1 encode/decode/verify, with no database or storage dependency.
 - [skillmeta](skillmeta/README.en.md) is the business metadata layer for Cloud Skills — it parses the `SKILL.md` YAML frontmatter, validates `name`/`description`, and derives `canonical_name = ASCII lowercase(name)`; pure CPU, deterministic, I/O-free, and strictly separate from `internal/skillpkg` (the identity layer, which never parses `name`).
 - [skillstore](skillstore/README.en.md) is the provider-neutral Object Storage semantic layer for Cloud Skill canonical packages — the physical `package_digest`, the stable logical object key, a create-only `ObjectStore` port, the five-class result taxonomy, and the probe-by-`object_locator` reconciliation; no concrete provider / upload HTTP API — the `internal/core` ingestion saga drives `PutImmutable`/`Reconcile` through `Store.SkillsObjectStore`.

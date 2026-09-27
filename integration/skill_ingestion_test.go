@@ -302,9 +302,10 @@ func TestSkillIngestStrandAndResume(t *testing.T) {
 func TestSkillIngestAuthorization(t *testing.T) {
 	store, _, user, ws := skillIngestFixture(t)
 
-	// A plain member (not owner/admin) is denied the write.
+	// A plain member (not owner/admin) with an active tenant membership is denied the write.
 	member := uuid.NewString()
 	execOK(t, store.Pool, `INSERT INTO users(id,display_name,status) VALUES($1,'member','active')`, member)
+	execOK(t, store.Pool, `INSERT INTO tenant_memberships(tenant_id,user_id,role,status) SELECT tenant_id,$2,'member','active' FROM collab_workspaces WHERE id=$1`, ws, member)
 	execOK(t, store.Pool, `INSERT INTO collab_workspace_members(workspace_id,user_id,role,status,created_by) VALUES($1,$2,'member','active',$3)`, ws, member, user)
 
 	_, err := store.IngestSkill(context.Background(), ws, member, &core.SkillIngestRequest{
@@ -318,6 +319,25 @@ func TestSkillIngestAuthorization(t *testing.T) {
 	f := core.ErrorCode(err)
 	if f.Code != "workspace_admin_required" || f.Status != 403 {
 		t.Fatalf("want workspace_admin_required/403, got %s/%d", f.Code, f.Status)
+	}
+
+	// A non-member (active tenant member but no workspace membership) is 404 not_found, hiding
+	// the space's existence rather than revealing it as an admin-only boundary (public upload ADR D2).
+	outside := uuid.NewString()
+	execOK(t, store.Pool, `INSERT INTO users(id,display_name,status) VALUES($1,'outsider','active')`, outside)
+	execOK(t, store.Pool, `INSERT INTO tenant_memberships(tenant_id,user_id,role,status) SELECT tenant_id,$2,'member','active' FROM collab_workspaces WHERE id=$1`, ws, outside)
+
+	_, err = store.IngestSkill(context.Background(), ws, outside, &core.SkillIngestRequest{
+		IdempotencyKey: "k1",
+		SourceType:     "directory",
+		Files:          skillSources("alpha", "", "body\n"),
+	})
+	if err == nil {
+		t.Fatal("non-member must be denied")
+	}
+	f = core.ErrorCode(err)
+	if f.Code != "not_found" || f.Status != 404 {
+		t.Fatalf("want not_found/404, got %s/%d", f.Code, f.Status)
 	}
 }
 

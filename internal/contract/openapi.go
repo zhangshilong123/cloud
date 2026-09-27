@@ -194,6 +194,31 @@ func Document() map[string]any {
 	}
 	cloneProps["executionId"], cloneProps["nodeId"], cloneProps["state"] = optional(str()), optional(str()), ref("CloneState")
 	s["CloneOperation"] = object(cloneProps, "operationId", "requestId", "repository", "branch", "executionId", "nodeId", "state", "createdAt", "updatedAt")
+	// Public Skill source upload (public upload ADR D7/D8/D9): the 200 envelope plus the
+	// per-candidate preparation-failure and ingestion shapes. skillId/revisionId/ingestionId are
+	// nullable because they only resolve after the saga; state/activation/errorCode are plain
+	// strings whose empty value is meaningful (pre-journal, not committed, or no error).
+	s["SourceUploadResult"] = object(obj{
+		"sourceKind":          enumeration("zip", "tar"),
+		"preparationFailures": array(ref("SourcePreparationFailure")),
+		"ingestions":          array(ref("SourceIngestionItem")),
+	}, "sourceKind", "preparationFailures", "ingestions")
+	s["SourcePreparationFailure"] = object(obj{
+		"candidateRoot": str(),
+		"errorCode":     str(),
+		"detail":        str(),
+	}, "candidateRoot", "errorCode", "detail")
+	s["SourceIngestionItem"] = object(obj{
+		"candidateRoot": str(),
+		"canonicalName": str(),
+		"skillId":       optional(uuid()),
+		"revisionId":    optional(uuid()),
+		"ingestionId":   optional(uuid()),
+		"state":         obj{"type": "string", "description": "planned | storing | verified | committed | failed | \"\" (pre-journal)"},
+		"activation":    obj{"type": "string", "description": "activated | activation_conflict | \"\" (not committed)"},
+		"replayed":      boolean(),
+		"errorCode":     str(),
+	}, "candidateRoot", "canonicalName", "skillId", "revisionId", "ingestionId", "state", "activation", "replayed", "errorCode")
 	paths := obj{}
 	for _, r := range router.Routes() {
 		path := r.Path
@@ -213,12 +238,20 @@ func Document() map[string]any {
 		description := description(r)
 		response, status := responseSchema(r)
 		responses := obj{status: obj{"description": "Successful command or resource response", "content": obj{"application/json": obj{"schema": response}}}}
-		for _, code := range []string{"400", "401", "403", "404", "409", "428", "500", "503"} {
+		errorCodes := []string{"400", "401", "403", "404", "409", "428", "500", "503"}
+		if isSkillsUpload(r) {
+			errorCodes = append(errorCodes, "413")
+		}
+		for _, code := range errorCodes {
 			responses[code] = obj{"description": errorDescription(code), "content": obj{"application/json": obj{"schema": ref("Error")}}}
 		}
 		operation := obj{"operationId": strings.ToLower(r.Method) + strings.NewReplacer("/", "_", ":", "").Replace(r.Path), "tags": []string{tag(r)}, "summary": summary(r), "description": description, "security": security, "responses": responses}
 		if public && (r.Method == "POST" || r.Method == "DELETE") {
-			parameters = append(parameters, obj{"name": "Idempotency-Key", "in": "header", "required": true, "schema": obj{"type": "string", "minLength": 1, "maxLength": 200}, "description": "Scoped to tenant and user. Same key and canonical method/path/body returns the original response before version validation; changed request is 409."})
+			idempotencyDesc := "Scoped to tenant and user. Same key and canonical method/path/body returns the original response before version validation; changed request is 409."
+			if isSkillsUpload(r) {
+				idempotencyDesc = "Saga idempotency namespace (workspace_id, idempotency_key, canonical_name). Same key and same fingerprint replays or resumes; a different fingerprint is 409 idempotency_conflict. Not the generic idempotency_records replay."
+			}
+			parameters = append(parameters, obj{"name": "Idempotency-Key", "in": "header", "required": true, "schema": obj{"type": "string", "minLength": 1, "maxLength": 200}, "description": idempotencyDesc})
 		}
 		if isList(r) {
 			parameters = append(parameters, obj{"name": "limit", "in": "query", "schema": obj{"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}, obj{"name": "after", "in": "query", "schema": uuid(), "description": "Exclusive UUID cursor, ascending stable ordering."})
@@ -227,15 +260,19 @@ func Document() map[string]any {
 			operation["parameters"] = parameters
 		}
 		if r.Method != "GET" {
-			properties := obj{}
-			required := []string{}
-			for _, name := range r.Fields {
-				properties[name] = inputSchema(name, r)
-				if !optionalField(name, r) {
-					required = append(required, name)
+			if isSkillsUpload(r) {
+				operation["requestBody"] = obj{"required": true, "content": obj{"multipart/form-data": obj{"schema": skillsUploadRequestSchema()}}}
+			} else {
+				properties := obj{}
+				required := []string{}
+				for _, name := range r.Fields {
+					properties[name] = inputSchema(name, r)
+					if !optionalField(name, r) {
+						required = append(required, name)
+					}
 				}
+				operation["requestBody"] = obj{"required": true, "content": obj{"application/json": obj{"schema": object(properties, required...)}}}
 			}
-			operation["requestBody"] = obj{"required": true, "content": obj{"application/json": obj{"schema": object(properties, required...)}}}
 		}
 		if paths[path] == nil {
 			paths[path] = obj{}
@@ -298,6 +335,20 @@ func tag(r router.Route) string {
 	return "tenants"
 }
 
+func isSkillsUpload(r router.Route) bool {
+	return r.Path == "/api/v1/tenants/:tid/spaces/:spaceId/skills/imports"
+}
+
+func skillsUploadRequestSchema() obj {
+	return object(obj{
+		"source_kind":     enumeration("zip", "tar"),
+		"source":          obj{"type": "string", "format": "binary"},
+		"target_skill_id": uuid(),
+		"display_name":    obj{"type": "string", "maxLength": 200},
+		"summary":         obj{"type": "string", "maxLength": 4096},
+	}, "source_kind", "source")
+}
+
 func isList(r router.Route) bool {
 	return r.Method == "GET" && (strings.HasSuffix(r.Path, "/tenants") || strings.HasSuffix(r.Path, "/members") || strings.HasSuffix(r.Path, "/projects") || strings.HasSuffix(r.Path, "/workspaces") || strings.HasSuffix(r.Path, "/spaces") || strings.HasSuffix(r.Path, "/resource-status") || strings.HasSuffix(r.Path, "/issue-statuses") || strings.HasSuffix(r.Path, "/labels") || strings.HasSuffix(r.Path, "/issue-views") || strings.HasSuffix(r.Path, "/comments") || strings.HasSuffix(r.Path, "/subscribers") || strings.HasSuffix(r.Path, "/clones"))
 }
@@ -324,6 +375,9 @@ func responseSchema(r router.Route) (schema obj, status string) {
 		default:
 			return ref("Operation"), "200"
 		}
+	}
+	if isSkillsUpload(r) {
+		return ref("SourceUploadResult"), "200"
 	}
 	switch {
 	case strings.Contains(r.Path, "/spaces"):
@@ -614,6 +668,9 @@ func description(r router.Route) string {
 	case "node_register", "node_status", "node_idle", "node_finish":
 		return "Requires node service credential whose sub is a process UUID and whose workspaceId/sandboxId/generation match the current unterminated instance. Node identity cannot be replaced while live. Status/idle use Node version; ticket finish uses Ticket version and a completed replay is idempotent. initialized cannot regress. Idle is scoped to operationId and exact Workspace admissionEpoch; true requires no active tickets. false fails that quiesce operation with resource_in_use and restores original admission. Registration requires protocolVersion=1; Pod Running alone cannot make Ready."
 	}
+	if isSkillsUpload(r) {
+		return base + "Imports a Skill source as one archive (zip or uncompressed tar) via multipart/form-data. source_kind selects the decoder (no filename/MIME sniffing); the archive is decoded into deterministic candidates and ingested through the journal-first saga under the Idempotency-Key as the saga idempotency namespace (same key + same fingerprint replays or resumes; a different fingerprint is 409). Requires space owner/admin; a non-member or a cross-space target_skill_id is 404 not_found. Returns a 200 envelope with preparationFailures and per-candidate ingestions; a source-level structural failure (zero candidates) is 400 with a source_* code. The body budget is 256 MiB (413 upload_too_large)."
+	}
 	if strings.Contains(r.Path, "/spaces") {
 		switch {
 		case strings.Contains(r.Path, "/members") && r.Method == "POST":
@@ -684,6 +741,8 @@ func errorDescription(code string) string {
 		return "Resource absent or outside authorized tenant/owner scope"
 	case "409":
 		return "Version/idempotency conflict, resource_in_use, closed admission, stale epoch/Node/sandbox, incomplete effect, invalid transition, unconfirmed termination/idle, last_admin, space_last_owner, space_slug_conflict, or default_space_protected"
+	case "413":
+		return "Upload exceeds the 256 MiB source budget"
 	case "428":
 		return "Version precondition required"
 	case "503":

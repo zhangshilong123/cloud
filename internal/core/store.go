@@ -335,6 +335,20 @@ func (s *Store) Bootstrap(ctx context.Context, name, source, subject, display st
 	})
 }
 
+// ResolveIdentity returns the user UUID for a verified caller identity, provisioning the user on
+// first sight exactly as the public request path does. It is the identity-resolution seam the
+// Skill source upload handler needs before the saga, which is keyed on the user UUID rather than
+// the token subject.
+func (s *Store) ResolveIdentity(ctx context.Context, source, subject, display string) (string, error) {
+	out, err := s.transact(ctx, func(t *transaction) Object {
+		return Object{"id": identity(t, source, subject, display).S("id")}
+	})
+	if err != nil {
+		return "", err
+	}
+	return out.S("id"), nil
+}
+
 // EnsureMember resolves or provisions a user identity and guarantees an active membership in the
 // given tenant, returning the user object. It exists only for the local development edge server
 // (cmd/ora-web), which signs a user token for an arbitrary login subject and must attach that user

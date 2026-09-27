@@ -39,7 +39,9 @@ import type {
   PostApiV1TenantsTidSpacesSpaceIdMembersBody,
   PostApiV1TenantsTidSpacesSpaceIdProjects202,
   PostApiV1TenantsTidSpacesSpaceIdProjectsBody,
+  PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBody,
   PutApiV1TenantsTidSpacesSpaceIdMembersUidBody,
+  SourceUploadResult,
   Space,
   SpaceEvent,
   SpaceMember
@@ -1075,4 +1077,86 @@ export const usePostApiV1TenantsTidSpacesSpaceIdProjects = <TError = ErrorType<E
         TContext
       > => {
       return useMutation(getPostApiV1TenantsTidSpacesSpaceIdProjectsMutationOptions(options), queryClient);
+    }
+    /**
+ * Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Imports a Skill source as one archive (zip or uncompressed tar) via multipart/form-data. source_kind selects the decoder (no filename/MIME sniffing); the archive is decoded into deterministic candidates and ingested through the journal-first saga under the Idempotency-Key as the saga idempotency namespace (same key + same fingerprint replays or resumes; a different fingerprint is 409). Requires space owner/admin; a non-member or a cross-space target_skill_id is 404 not_found. Returns a 200 envelope with preparationFailures and per-candidate ingestions; a source-level structural failure (zero candidates) is 400 with a source_* code. The body budget is 256 MiB (413 upload_too_large).
+ * @summary POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports
+ */
+export const postApiV1TenantsTidSpacesSpaceIdSkillsImports = (
+    tid: string,
+    spaceId: string,
+    postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody: PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBody,
+ options?: SecondParameter<typeof customInstance>,signal?: AbortSignal
+) => {
+
+      const formData = new FormData();
+if(postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.display_name !== undefined) {
+ formData.append(`display_name`, postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.display_name);
+ }
+formData.append(`source`, postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.source);
+formData.append(`source_kind`, postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.source_kind);
+if(postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.summary !== undefined) {
+ formData.append(`summary`, postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.summary);
+ }
+if(postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.target_skill_id !== undefined) {
+ formData.append(`target_skill_id`, postApiV1TenantsTidSpacesSpaceIdSkillsImportsBody.target_skill_id);
+ }
+
+      return customInstance<SourceUploadResult>(
+      {url: `/api/v1/tenants/${tid}/spaces/${spaceId}/skills/imports`, method: 'POST',
+      headers: {'Content-Type': 'multipart/form-data', },
+       data: formData, signal
+    },
+      options);
+    }
+
+
+
+
+export const getPostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationKey = () => ['postApiV1TenantsTidSpacesSpaceIdSkillsImports'] as const;
+
+export const getPostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSpaceIdSkillsImports>>, TError,PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationVariables, TContext>, request?: SecondParameter<typeof customInstance>}
+): UseMutationOptions<Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSpaceIdSkillsImports>>, TError,PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationVariables, TContext> => {
+
+const mutationKey = getPostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSpaceIdSkillsImports>>, PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationVariables> = (props) => {
+          const {tid,spaceId,data} = props ?? {};
+
+          return  postApiV1TenantsTidSpacesSpaceIdSkillsImports(tid,spaceId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationResult = NonNullable<Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSpaceIdSkillsImports>>>
+    export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationBody = PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBody
+    export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationError = ErrorType<Error>
+    export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationVariables = {tid: string;spaceId: string;data: PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBody}
+
+    /**
+ * @summary POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports
+ */
+export const usePostApiV1TenantsTidSpacesSpaceIdSkillsImports = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSpaceIdSkillsImports>>, TError,PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationVariables, TContext>, request?: SecondParameter<typeof customInstance>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof postApiV1TenantsTidSpacesSpaceIdSkillsImports>>,
+        TError,
+        PostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getPostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationOptions(options), queryClient);
     }

@@ -174,7 +174,9 @@ type ingestPlanned struct {
 // different fingerprint is a deterministic conflict (D22); a same-fingerprint row either
 // replays its terminal result or resumes the saga.
 func ingestSkillPlanned(t *transaction, workspaceID, actorID string, req *SkillIngestRequest, cand *skillCandidate) ingestPlanned {
-	switch workspaceRole(t, workspaceID, actorID) {
+	role := workspaceRole(t, workspaceID, actorID)
+	require(role != "", 404, "not_found")
+	switch role {
 	case "owner", "admin":
 	default:
 		reject(403, "workspace_admin_required")
@@ -317,9 +319,12 @@ func (s *Store) IngestSkill(ctx context.Context, workspaceID, actorID string, re
 }
 
 // IngestSkills runs a batch of candidates under one IdempotencyKey and SourceType with
-// per-candidate independence (D4/D5): one candidate's failure never rolls back a sibling, and a
-// conflict on one candidate does not abort the batch. It returns one result per candidate in
-// input order. Only a catastrophic error (e.g. a lost database) surfaces as a non-nil error.
+// per-candidate independence (D4/D5): one candidate's business failure never rolls back a
+// sibling. It returns one result per candidate in input order. A *Fault — an authorization
+// rejection, an idempotency conflict, a cross-workspace target, or a lost database — is a
+// request-level rejection and propagates as a non-nil error so the caller can surface it as an
+// HTTP 403/404/409 rather than a per-candidate errorCode inside a 200 envelope (public upload
+// ADR D2/D6/D16).
 func (s *Store) IngestSkills(ctx context.Context, workspaceID, actorID, key, sourceType string, reqs []SkillIngestRequest) ([]SkillIngestResult, error) {
 	results := make([]SkillIngestResult, 0, len(reqs))
 	for _, r := range reqs {
@@ -327,8 +332,7 @@ func (s *Store) IngestSkills(ctx context.Context, workspaceID, actorID, key, sou
 		r.SourceType = sourceType
 		res, err := s.IngestSkill(ctx, workspaceID, actorID, &r)
 		if err != nil {
-			results = append(results, SkillIngestResult{ErrorCode: ErrorCode(err).Code})
-			continue
+			return results, err
 		}
 		results = append(results, res)
 	}

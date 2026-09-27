@@ -41,6 +41,10 @@ const (
 	ProxyPath     = "/api/v1/*path"
 	// maxBodyBytes matches Cloud's request body limit so the Gateway never relays more than Cloud accepts.
 	maxBodyBytes = 64 << 10
+	// skillsUploadBudget is the route-local request-body ceiling for the public Skill source
+	// upload, mirroring the Cloud router's own per-route budget (public upload ADR D14). The
+	// global maxBodyBytes is NOT raised; only this one route is exempt.
+	skillsUploadBudget = 256 << 20
 )
 
 type handler struct {
@@ -241,7 +245,8 @@ func (h *handler) relay(c *gin.Context) {
 		h.fail(c, fault{"credential_unavailable", http.StatusServiceUnavailable})
 		return
 	}
-	if c.Request.ContentLength > maxBodyBytes {
+	limit := requestBodyLimit(c.Request.Method, c.Request.URL.Path)
+	if c.Request.ContentLength > limit {
 		h.fail(c, fault{"request_too_large", http.StatusRequestEntityTooLarge})
 		return
 	}
@@ -252,7 +257,7 @@ func (h *handler) relay(c *gin.Context) {
 	deadline := time.AfterFunc(h.UpstreamTimeout, cancel)
 	defer deadline.Stop()
 	out := c.Request.Clone(ctx)
-	out.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+	out.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 	for _, name := range []string{"Authorization", "X-Ora-User-Token", "Cookie", "Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip"} {
 		out.Header.Del(name)
 	}
@@ -270,6 +275,26 @@ func (h *handler) relay(c *gin.Context) {
 			h.Log.Warn("event stream keeps write deadline", zap.String("requestId", c.GetString("requestId")), zap.String("sessionId", session.ID), zap.Error(e))
 		}
 	})
+}
+
+// requestBodyLimit returns the request-body ceiling for a relayed request. Every route keeps the
+// 64 KiB global ceiling except the Skills source upload, which has its own 256 MiB budget (public
+// upload ADR D14). The global maxBodyBytes is never widened; only this one route is exempt.
+func requestBodyLimit(method, path string) int64 {
+	if method == http.MethodPost && isSkillsUploadPath(path) {
+		return skillsUploadBudget
+	}
+	return maxBodyBytes
+}
+
+// isSkillsUploadPath reports whether a concrete request path is the Skills source upload route,
+// matching the segment shape /api/v1/tenants/{tid}/spaces/{spaceId}/skills/imports (the tid and
+// spaceId segments are opaque here; the Cloud router validates them).
+func isSkillsUploadPath(path string) bool {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	return len(parts) == 8 &&
+		parts[0] == "api" && parts[1] == "v1" && parts[2] == "tenants" &&
+		parts[4] == "spaces" && parts[6] == "skills" && parts[7] == "imports"
 }
 
 // decodeStrict reads a bounded JSON object and rejects unknown fields or trailing values.

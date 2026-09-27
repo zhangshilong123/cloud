@@ -88,10 +88,12 @@ may delete it. Per-resource membership (`project_members` / …) is **NOT used**
 | `skill_ingestions` | journal-first upload/import saga evidence (kept apart from `skill_revisions`) | workspace_id, target_skill_id (nullable), idempotency_key, source_type (`directory`/`archive`), canonical_name (0016), request_fingerprint (0016), expected_digest, digest_algorithm, object_locator, state (`planned`→`storing`→`verified`→`committed`/`failed`), activation_outcome (0016), error_code, error_detail, created_by · `UNIQUE(workspace_id, idempotency_key, canonical_name)` |
 
 **Persistence-only.** `0015` creates the domain tables and constraints and pins their SQL-enforceable
-invariants; there is **no** Skill HTTP API, no upload/ingestion pipeline, no `SKILL.md` discovery, no
-`AgentSkillBinding` / `ExecutionSkillBinding`, no execution snapshot or `RetrievalCapability` (a bearer
-credential that must never be persisted), and no frontend Skills board yet. Do not read these tables as
-an exposed feature — same additive-first rule as the collaboration tables below. ADRs:
+invariants. Since then the ingestion saga (`Store.IngestSkill`/`IngestSkills`), `SKILL.md` discovery
+(`internal/skillsource`), and the public upload HTTP API (`POST …/skills/imports`, Step 3B) have been
+layered on top; there is still **no** `AgentSkillBinding` / `ExecutionSkillBinding`, no execution snapshot
+or `RetrievalCapability` (a bearer credential that must never be persisted), and no frontend Skills board
+yet. Do not read these tables as an exposed feature — same additive-first rule as the collaboration tables
+below. ADRs:
 `specs/decisions/cloud/skills/0-cloud-skills.md` (status `proposed`),
 `specs/decisions/cloud/skills/20260924-canonical-skill-package-v1.md` (the canonical package
 encoder/digest now lives in `internal/skillpkg`; status `proposed`), and
@@ -141,7 +143,8 @@ structural/preparation/business failure boundary. These are realized in `interna
 (`PrepareDirectory` / `PrepareZip` / `PrepareTar` → `PreparedSourceResult{Candidates[],
 PreparationFailures[]}`) feeding the existing `IngestSkills` saga through `core.Store.IngestSource`. It has
 **no** schema impact: `0015_skills.sql` and `0016_skill_ingestion_idempotency.sql` are unchanged and no `0017`
-was added. The public upload HTTP API and a production Object Storage provider remain unimplemented.
+was added. The public upload HTTP API is now implemented (Step 3B); a production Object Storage provider
+remains unimplemented.
 
 ### Schema-ready vs. exposed (collaboration tables)
 

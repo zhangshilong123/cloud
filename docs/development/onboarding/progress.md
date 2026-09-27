@@ -9,7 +9,8 @@ Workspace Member Management & Onboarding（Step 3A）**之后：`@` 协作链路
 creator 或 owner/admin）；**Workspace foundation 已收口**（0-Workspace onboarding + 可选创建；成员
 角色 owner-only、owner immutable；移除 owner-only 且仅移除成员资格）。契约与实现记录见
 [12-collab §38 / §38.37](../../migrations/multica-issue-board/12-collaboration-architecture.md#38-wave-3b-2--workflow-interaction-design-frozen)，
-下一步是 3C（Issue Detail & Collaboration UI）与 Issue Workspace Scoping。
+下一步是 3C（Issue Detail & Collaboration UI）与 Issue Workspace Scoping。另：Cloud Skills 公共上传 API
+已落地（Step 3A 契约冻结 + Step 3B 实现，见下文 Cloud Skills 一节）。
 
 > **2026-09-21 — Workspace Integration Stage A**：`origin/main`（含 `cmd/gateway`、`0005_gateway_auth`）已受控融合进
 > `workspace合并`（main 只读、SHA 不变）；Issues 迁移前移重编号 **0005→0006 … 0009→0010** 以保持上游编号稳定；
@@ -225,7 +226,7 @@ canonical_name)`，`0015_skills.sql` 不改）→ `internal/core` 的 journal-fi
 `integration/skill_ingestion_test.go` 集成用例（真实 PostgreSQL + 内存 fakestore）覆盖
 commit/activate、幂等 replay、409 conflict、revision 去重、batch partial-success、reconcile mismatch、
 adopt、strand/resume、authorization、explicit update、object-store unavailable，全部通过。
-**仍未实现**：上传 HTTP API / 生产 Object Storage provider /
+**仍未实现**：上传 HTTP API（**契约已由 Step 3A 冻结，实现 NOT started**）/ 生产 Object Storage provider /
 `RetrievalCapability` / Node 交付 / 前端看板。
 
 **Step 2C.1 source intake & candidate discovery 已实现**：ADR
@@ -242,6 +243,43 @@ duplicate canonical_name = source-level structural conflict（整 source 在 TX 
 （`0015`/`0016` 不变）。source adapter 单测（directory/zip/tar/convergence）+ 6 个集成用例（真实
 PostgreSQL + 内存 fakestore）全部通过。
 
+**Step 3A public upload API contract 已冻结（仅设计，实现 NOT started）**：ADR
+`specs/decisions/cloud/skills/20260927-public-upload-api-contract.md`（状态 `proposed`）冻结了公共上传边界
+——endpoint `POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports`（tenant-prefixed、space-scoped，
+`spaceId` 即 saga 的 `workspace_id`）；transport 为 `multipart/form-data` 单 archive part、`source_kind ∈
+{zip, tar}` 显式（无 sniffing/fallback，directory 由客户端打包为 zip/tar 再传，`KindDirectory` 仍是服务器
+端摄取面）；request 字段 = `source_kind`/`source`/可选 `target_skill_id`/`display_name`/`summary`（禁 client
+传 canonical_name/digest/locator/revision_id）；`Idempotency-Key` 必填且语义 = saga 幂等 namespace（不写通用
+`idempotency_records`）；response = 200 envelope `{sourceKind, preparationFailures[], ingestions[]}`，
+source structural failure → `400 source_*`、candidate 失败 → per-item、partial success overall 200、
+`activation_conflict` 是 `activation` 非 error_code；replay/continuation 沿用 saga D14/D22；上传预算 ≤ 2 GiB
+（provisional 产品上限 256 MiB，超限 `413`），buffering ephemeral-only；schema 影响 NONE（`0015`/`0016`
+不变）。**实现未开始**（multipart transport + router/gateway body 预算协调 + contract/OpenAPI/frontend
+同步，留待 Step 3B）。
+
+**Step 3B public upload API 已实现**：Step 3A 冻结的契约落地为代码 —— `POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports`
+路由（`router.Routes()` 白名单 + 专用 `uploadSkillSource` handler，`internal/api/router/skill_upload.go`）；multipart
+`source_kind∈{zip,tar}` + 单 `source` part，`target_skill_id`/`display_name`/`summary` 可选，字段白名单严格（禁
+`canonical_name`/`content_digest`/`package_digest`/`object_locator`/`revision_id`，未知/重复 → `unknown_field`/
+`duplicate_field`）；route-local 256 MiB 预算（`skillsUploadBudget`，超限 `413 upload_too_large`，ephemeral-only 不落
+staging），**其余所有路由保持 64 KiB**——gateway 路由感知豁免（`requestBodyLimit`/`isSkillsUploadPath` 仅匹配 8 段
+`skills/imports` 路径，`internal/gateway/handler.go`）+ router 通用 JSON 循环跳过该路由
+（`internal/api/router/router.go`）；双凭证（gateway service role + `X-Ora-User-Token`，`user.Caller ==
+service.Subject`）→ `store.ResolveIdentity` → `core.Store.IngestSource`（whole-request 授权：非成员 `404 not_found`、
+成员非 owner/admin `403 workspace_admin_required`、`target_skill_id` 跨 Workspace/不存在 `404 not_found`、多 candidate
++ target `400 single_candidate_required`——这些是 HTTP 级拒绝，绝不进 200 envelope 的 per-item errorCode）；`Idempotency-Key`
+必填、语义 = saga 幂等 namespace（same key + same fingerprint → replay、same key + different fingerprint → `409
+idempotency_conflict`，由 `IngestSkills` 上抛 `*Fault` 不再吞入 per-item）；200 envelope
+`{sourceKind, preparationFailures[], ingestions[]}`，source structural failure → `400 source_*`（零副作用），partial
+success overall 200，`activation_conflict` 仍是 `activation` 字段而非 errorCode；schema 影响 NONE（`0015`/`0016` 不变、
+无 `0017`）；contract/OpenAPI 同步（`internal/contract/openapi.go` 新增 `SourceUploadResult`/`SourcePreparationFailure`/
+`SourceIngestionItem` schema + multipart requestBody + `413` 描述，`api/openapi.json` 经 `go run ./cmd/openapi` 重生成
+并通过 `TestPublishedOpenAPIIsValidAndCurrent`；frontend 经 orval 重生成 `sourceKind`/`preparationFailures`/`ingestions`
+类型，**无看板 UI**）；测试：router 单测（multipart 严格性/预算/缺省）、gateway body-limit 单测、
+`integration/skill_upload_test.go` 11 用例（zip/tar happy、replay、409、member 403 / non-member 404 / cross-workspace
+404、single_candidate、partial-success 映射、fatal source 零副作用、>64 KiB 接受）全部通过。**仍未实现**：生产 Object
+Storage provider / `RetrievalCapability` / Node 交付 / Skills 看板 UI / AgentSkillBinding / ExecutionSkillBinding。
+
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
 | `skills`（可变业务资源） | ✅ 持久化 | `workspace_id → collab_workspaces`，`skill_immutable` trigger 禁止跨 Workspace 原地移动；active `(workspace_id, canonical_name)` 部分唯一索引，软删除释放名称 |
@@ -252,7 +290,7 @@ PostgreSQL + 内存 fakestore）全部通过。
 | **SKILL.md 发现 / directory·archive source adapter** | ✅ **IMPLEMENTED（Step 2C.1）** | ADR `20260927-source-intake-candidate-discovery.md`（`proposed`，已批准实施）落地为 `internal/skillsource`：directory / ZIP / 未压缩 TAR 三 transport 摄取为 `sourceEntry`、source 级安全校验（复用 `skillpkg.ValidatePath`、duplicate/case-collision、symlink/特殊条目、path traversal、limits）、精确 `SKILL.md` candidate 发现（root candidate owns 整树 / nested root 整 source 拒绝）、duplicate `canonical_name` 整 source 拒绝、invalid metadata → `PreparationFailure`（sibling 继续）、`PreparedSourceResult` 喂给 `core.Store.IngestSource`；无 schema 变更 |
 | **Ingestion saga（candidate / 幂等 / 事务边界 / 崩溃恢复）** | ✅ **IMPLEMENTED（Step 2C）** | ADR `20260927-canonical-ingestion-saga.md`（`proposed`）冻结的语义已落地为 `internal/core` 的 `Store.IngestSkill` / `Store.IngestSkills`：candidate 模型、batch partial-success、语义 request 指纹 = `(target_skill_id, display_name, summary, content_digest, package_digest)`、per-candidate 幂等身份 `(workspace_id, idempotency_key, canonical_name)`、TX #1/TX #2 内容、CAS 冲突 durable（`activation_outcome`）、崩溃恢复 = client-driven continuation（无服务端 worker、无 autonomous payload recovery，bytes 由客户端重提交确定性重建）；`0016_*` forward migration 已落地（四变更，`0015` 不改） |
 | **SKILL.md metadata contract（frontmatter / name / canonical_name）** | ✅ **IMPLEMENTED（Step 2C）** | ADR `20260927-skill-md-metadata-contract.md`（`proposed`）落地为 `internal/skillmeta`：`canonical_name = ASCII lowercase(TrimSpace(name))` 唯一变换、`name` 必填且必须是 YAML string（ASCII `[A-Za-z0-9._-]+`、不以 `.` 开头、≤ 200 bytes）、`description` 可选（string、≤ 4096 bytes）、重复 key 与非法 YAML fail closed、未知字段不透明；解析器归业务 metadata 层 `internal/skillmeta`，`internal/skillpkg` 保持冻结不解析 name |
-| **上传 HTTP API / directory·archive source adapter** | ⚠️ 部分（source adapter ✅ / 上传 API ❌） | 无任何 Skill 路由（上传 HTTP API 仍未实现）；directory/archive source adapter 已由 Step 2C.1 落地（`internal/skillsource`，zip/tar 解码 + `SKILL.md` discovery）；saga 当前接受 caller 提供的 `Files` 或经 `IngestSource` 喂入的 `PreparedCandidate` |
+| **上传 HTTP API / directory·archive source adapter** | ✅ **IMPLEMENTED（Step 2C.1 + 3B）** | source adapter（`internal/skillsource`：zip/tar 解码 + `SKILL.md` discovery）已由 Step 2C.1 落地；公共上传 API 已由 Step 3B 落地（ADR `20260927-public-upload-api-contract.md`：`POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports`、multipart 单 archive、`source_kind∈{zip,tar}`、route-local 256 MiB / 其余路由 64 KiB、双凭证 + workspace owner/admin 授权、saga 幂等语义、200 部分成功 envelope、schema NONE）；saga 接受 caller 提供的 `Files` 或经 `IngestSource` 喂入的 `PreparedCandidate` |
 | **Object Storage 抽象（identity / key / write / reconcile）** | ✅ **IMPLEMENTED（Step 2B）** | ADR `20260927-object-storage-abstraction.md` 冻结的语义已落地为代码（`internal/skillstore`）：三层 identity 分离、`package_digest`、object key `skills/<format>/v<n>/<algo>/<package_digest>`（`Locator`）、最小 `ObjectStore` port（`PutImmutable`/`Stat`/`Get`）、create-only、五值结果分类（`error != nil` 不算分类）、按 `object_locator` probe 的 `Reconcile`、`MISMATCH` fail closed、crash adopt；`internal/skillstore/fakestore` 内存测试替身覆盖全部失败模式。**仍无**生产 provider、无 SDK 依赖、无配置键、无上传 HTTP API、无 schema 变更（`0015_skills.sql` 未修改） |
 | **Object Storage 写入（saga 驱动 port）** | ✅ **IMPLEMENTED（Step 2C）** | 不可变包字节经 `Store.SkillsObjectStore` 的 `PutImmutable`/`Reconcile` 写入对象存储（D8），完全在 DB 事务外；集成测试经内存 fakestore 写入并验证真实 package bytes；DB 事务内不做对象存储副作用。生产 provider 属后续步骤 |
 | **Object Storage signed URL / RetrievalCapability** | ❌ NOT IMPLEMENTED | 读取侧（capability、Node data plane）不在 Step 2B.0 范围；signed RetrievalCapability（D30）属 bearer credential，永不持久化/记录 |
@@ -478,7 +516,8 @@ vite 代理 `/auth,/api,/healthz` → :8081）。与 `cmd/demo-issue-board-web`�
 | 最近 | **Cloud Skills SKILL.md Metadata Contract 冻结（Phase 3 / Step 2C.0b，仅设计）**（ADR `20260927-skill-md-metadata-contract.md`：关闭 `canonical_name` 派生缺口 —— `canonical_name = ASCII lowercase(TrimSpace(name))` 唯一变换、`name` 必填且必须是 YAML string（ASCII `[A-Za-z0-9._-]+`、不以 `.` 开头、≤ 200 bytes）、`description` 可选、重复 key 与非法 YAML fail closed、未知字段不透明；解析器归业务 metadata 层，`internal/skillpkg` 保持冻结；与 Desktop `0-static-skill-package.md` D3 及 5 个审计到的 multica `SKILL.md` 内容兼容；`plan/plan_Skills.md` + docs 同步；**无**代码 / 迁移） |
 | 最近 | **Cloud Skills Ingestion Saga 实现（Phase 3 / Step 2C）**（`internal/skillmeta` 解析器 + `0016_skill_ingestion_idempotency.sql` forward migration（`canonical_name`/`request_fingerprint`/`activation_outcome` + 唯一索引，`0015` 不改）+ `internal/core` 的 `Store.IngestSkill`/`IngestSkills` journal-first saga（TX #1 → 事务外 `PutImmutable`/`Reconcile` → TX #2 + activation CAS；batch partial-success；client-driven continuation）；11 个集成用例全通过。**无**上传 HTTP API / 生产 provider / `RetrievalCapability` / Node 交付） |
 | 最近 | **Cloud Skills Source Intake 实现（Phase 3 / Step 2C.1）**（`internal/skillsource` directory / ZIP / 未压缩 TAR 摄取 + source 级安全校验（复用 `skillpkg.ValidatePath`）+ 精确 `SKILL.md` candidate 发现（root candidate owns 整树 / nested root 与 duplicate `canonical_name` 整 source 拒绝）+ invalid metadata → `PreparationFailure`；`PreparedSourceResult` 经 `core.Store.IngestSource` 喂入既有 `IngestSkills` saga；无 schema 变更；source adapter 单测 + 6 个真实 PostgreSQL 集成用例全通过） |
-| 下一步 | **3C**（Issue Detail & Collaboration UI）；**Issue Workspace Scoping**（`issues.space_id`）；Agent / Team / Workflow / MCP / Skill Workspace Scoping；生产 Substrate / 看板分页与全文搜索 / 实时推送；真实 Agent/Team/Workflow/AI provider（BLOCKED ON EXTERNAL DESIGN）；**Cloud Skills 后续切片**（上传 HTTP API / 生产 Object Storage provider / `RetrievalCapability` / Node 交付，均未开始） |
+| 最近 | **Cloud Skills Public Upload API Contract 冻结（Phase 4 / Step 3A，仅设计）**（ADR `20260927-public-upload-api-contract.md`：`POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports`（space-scoped，`spaceId`=saga `workspace_id`）；multipart 单 archive part、`source_kind∈{zip,tar}` 显式、directory 由客户端打包；request 字段白名单 + 禁传 canonical_name/digest/locator/revision_id；`Idempotency-Key` = saga 幂等 namespace；200 部分成功 envelope + `400 source_*` source structural failure；replay/continuation 沿用 saga；上传预算 ≤ 2 GiB（产品上限 256 MiB）、buffering ephemeral-only；schema NONE（`0015`/`0016` 不变）；**实现 NOT started**） |
+| 下一步 | **3C**（Issue Detail & Collaboration UI）；**Issue Workspace Scoping**（`issues.space_id`）；Agent / Team / Workflow / MCP / Skill Workspace Scoping；生产 Substrate / 看板分页与全文搜索 / 实时推送；真实 Agent/Team/Workflow/AI provider（BLOCKED ON EXTERNAL DESIGN）；**Cloud Skills 后续切片**（上传 HTTP API 契约已冻结·实现未开始 / 生产 Object Storage provider / `RetrievalCapability` / Node 交付，均未实现） |
 
 > 想看每个功能对应的接口和表，去 [../agent/api-reference.md](../agent/api-reference.md) 和
 > [../agent/database.md](../agent/database.md)。想看迁移的完整决策记录，去

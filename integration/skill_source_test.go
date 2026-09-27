@@ -94,7 +94,7 @@ func TestSkillSourceDirectoryIngest(t *testing.T) {
 		t.Fatalf("want 1 candidate, got %d", len(prepared.Candidates))
 	}
 
-	out, err := store.IngestSource(context.Background(), ws, user, "src-key", prepared)
+	out, err := store.IngestSource(context.Background(), ws, user, "src-key", prepared, core.SourceIngestParams{})
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestSkillSourceArchiveIngest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare zip: %v", err)
 	}
-	out, err := store.IngestSource(context.Background(), ws, user, "zip-key", prepared)
+	out, err := store.IngestSource(context.Background(), ws, user, "zip-key", prepared, core.SourceIngestParams{})
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestSkillSourcePartialMetadataPreparation(t *testing.T) {
 		t.Fatalf("failure root: %+v", prepared.PreparationFailures[0])
 	}
 
-	out, err := store.IngestSource(context.Background(), ws, user, "batch-key", prepared)
+	out, err := store.IngestSource(context.Background(), ws, user, "batch-key", prepared, core.SourceIngestParams{})
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}

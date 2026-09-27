@@ -1693,6 +1693,77 @@ source-intake 语义已由 `specs/decisions/cloud/skills/20260927-source-intake-
 - [ ] public upload HTTP API / 生产 Object Storage provider / 前端 / RetrievalCapability / Node 交付 /
       Agent-Execution binding 仍未实现（后续阶段）。
 
+### Step 3A Public upload API contract —— 契约已冻结（仅设计）
+
+状态：**API 契约已冻结**；实现**尚未开始**。由
+`specs/decisions/cloud/skills/20260927-public-upload-api-contract.md`（状态 `proposed`，仅设计）冻结。
+
+- [x] **endpoint**：`POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports` —— 按仓库约定 tenant-prefixed、
+      space-scoped（`spaceId` 即 saga 的 `workspace_id` = `collab_workspaces.id`）；**不是**无 tenant 前缀的
+      `/api/v1/spaces/{workspace_id}/...` 形式。
+- [x] **auth**：复用 Collaboration Workspace 双凭证 + `workspaceRole`；import / 显式 update 需 space
+      owner/admin（`403 workspace_admin_required`）；跨 workspace `target_skill_id` 与 space 非成员读取 →
+      `404`（无泄漏）。
+- [x] **transport**：`multipart/form-data` 单 archive part。`source_kind ∈ {zip, tar}`（显式，无
+      filename/MIME/sniffing/fallback）；`directory` 不是 public wire kind——客户端本地目录先打包为 zip/tar
+      再上传（canonical content 相同；`KindDirectory`/`PrepareDirectory` 仍是服务器端摄取面）。
+- [x] **request 字段**：`source_kind` + `source`（archive bytes）+ 可选 `target_skill_id`（显式 update，
+      要求单 candidate source）+ 可选 `display_name`/`summary`（新建 Skill 元数据）。禁止 client 传
+      `canonical_name`/`content_digest`/`package_digest`/`object_locator`/`revision_id`。
+- [x] **Idempotency-Key**：必填 header，语义 = saga 幂等 namespace `(workspace_id, idempotency_key,
+      canonical_name)` + `request_fingerprint`；upload endpoint **不**写通用 `idempotency_records` 行（二进制
+      body + continuation 语义）。
+- [x] **response**：`200` envelope `{sourceKind, preparationFailures[], ingestions[]}`。source structural
+      failure → `400` + `source_*`（zero ingestion rows）；candidate preparation failure → per-item 无任何
+      Skill identity；candidate saga failure / `activation_conflict` → per-item 在 `200` envelope 内表达。
+- [x] **partial success**：source 结构有效即 overall `200`；仅 catastrophic DB 失败 → `500`。
+- [x] **replay / continuation**：same key + same fingerprint → durable per-candidate 结果（`replayed`）或
+      `planned`/`storing` resume（client-driven，saga D14）；same key + different fingerprint → `409`。
+- [x] **limits**：上传预算 ≤ 2 GiB（provisional 产品上限 256 MiB）；archive/entry/expanded/candidate 上限继承
+      `skillsource.Limits`；per-file/path 上限继承 `skillpkg.Limits`；buffering 是 ephemeral-only（无 durable
+      staging）。超预算 → `413 upload_too_large`。
+- [x] **schema 影响**：NONE —— `0015_skills.sql` / `0016_skill_ingestion_idempotency.sql` 不变，无 `0017`。
+- [x] 实现（multipart transport + router/gateway body 预算协调 + contract/OpenAPI/frontend 同步，见 ADR
+      D17）已完成——见下方 Step 3B。
+
+### Step 3B Public upload API —— 已实现
+
+状态：**已实现**。Step 3A 冻结的契约端到端落地：multipart transport、route-local body 预算、双凭证授权、
+saga 幂等、`200` envelope、contract/OpenAPI/frontend 同步——**无 schema 变更**。
+
+- [x] **route + transport**：`POST /api/v1/tenants/:tid/spaces/:spaceId/skills/imports` 登记进 `router.Routes()`
+      并由专用 `uploadSkillSource` 处理（`internal/api/router/skill_upload.go`）；`multipart/form-data` 单 `source`
+      file part + 严格文本字段白名单（`source_kind`/`target_skill_id`/`display_name`/`summary`）。未知或重复字段
+      ——包括禁传的 `canonical_name`/`content_digest`/`package_digest`/`object_locator`/`revision_id`——被拒
+      （`unknown_field`/`duplicate_field`）；`source_kind` 显式并映射到 `skillsource.SourceKind`，绝不
+      filename/MIME/sniffed。
+- [x] **body 预算**：route-local 256 MiB 上限（`skillsUploadBudget`，超限 `413 upload_too_large`），
+      ephemeral-only（无 durable staging，绝不把超限 body 整段读入内存）。**其余所有路由保持 64 KiB** JSON 上限；
+      gateway 路由感知（`requestBodyLimit`/`isSkillsUploadPath` 仅豁免 8 段 `skills/imports` 形态），全局
+      `maxBodyBytes` 绝不调大。
+- [x] **授权**：双凭证（gateway service role + `X-Ora-User-Token`，`user.Caller == service.Subject`）→
+      `store.ResolveIdentity` → `core.Store.IngestSource`。whole-request 校验零副作用快速失败：非成员 → `404
+      not_found`；成员但非 owner/admin → `403 workspace_admin_required`；`target_skill_id` 跨 workspace/不存在 →
+      `404 not_found`（无泄漏）；`target_skill_id` 且多 candidate → `400 single_candidate_required`。这些都是
+      HTTP 级拒绝，绝不进 `200` envelope 的 per-item `errorCode`。
+- [x] **幂等**：`Idempotency-Key` 必填；语义 = saga namespace。same key + same fingerprint → replay /
+      continuation；same key + different fingerprint → `409 idempotency_conflict`。`IngestSkills` 现上抛
+      `*Fault`（auth/conflict/scope），不再折入 per-candidate `errorCode`。
+- [x] **envelope**：`200 {sourceKind, preparationFailures[], ingestions[]}`；source structural failure → `400
+      source_*`（零行）；partial success → overall `200`；`activation_conflict` 仍是 `activation` 字段，绝不作为
+      `errorCode`。
+- [x] **contract 同步**：`internal/contract/openapi.go`（`SourceUploadResult`/`SourcePreparationFailure`/
+      `SourceIngestionItem` schema、multipart request body、`413` 描述）；`api/openapi.json` 经 `go run
+      ./cmd/openapi` 重生成并由 `TestPublishedOpenAPIIsValidAndCurrent` 把关；frontend 经 orval 重生成
+      `sourceKind`/`preparationFailures`/`ingestions` 类型——无看板 UI。
+- [x] **schema 影响**：NONE —— `0015_skills.sql` / `0016_skill_ingestion_idempotency.sql` 不变，无 `0017`。
+- [x] **测试**：router multipart 严格性/body 预算单测（`internal/api/router/skill_upload_test.go`）；gateway
+      body-limit 钉死单测（`internal/gateway/bodylimit_test.go`）；E2E `integration/skill_upload_test.go`（zip/tar
+      happy、replay、`409`、member `403` / non-member `404` / cross-workspace `404`、`single_candidate_required`、
+      partial-success 映射、fatal source 零副作用、>64 KiB 接受）。
+- [ ] 生产 Object Storage provider / `RetrievalCapability` / Node 交付 / Skills 看板 UI / AgentSkillBinding /
+      ExecutionSkillBinding 仍未实现（后续阶段）。
+
 ## Phase 4 — Public API / Skills board backend
 
 - Workspace-scoped CRUD/import；

@@ -821,6 +821,43 @@ export interface Snapshot {
   workspaces: ControllerWorkspace[];
 }
 
+export interface SourceIngestionItem {
+  /** activated | activation_conflict | "" (not committed) */
+  activation: string;
+  candidateRoot: string;
+  canonicalName: string;
+  errorCode: string;
+  /** @nullable */
+  ingestionId: string | null;
+  replayed: boolean;
+  /** @nullable */
+  revisionId: string | null;
+  /** @nullable */
+  skillId: string | null;
+  /** planned | storing | verified | committed | failed | "" (pre-journal) */
+  state: string;
+}
+
+export interface SourcePreparationFailure {
+  candidateRoot: string;
+  detail: string;
+  errorCode: string;
+}
+
+export type SourceUploadResultSourceKind = typeof SourceUploadResultSourceKind[keyof typeof SourceUploadResultSourceKind];
+
+
+export const SourceUploadResultSourceKind = {
+  zip: 'zip',
+  tar: 'tar',
+} as const;
+
+export interface SourceUploadResult {
+  ingestions: SourceIngestionItem[];
+  preparationFailures: SourcePreparationFailure[];
+  sourceKind: SourceUploadResultSourceKind;
+}
+
 export interface Space {
   /** @nullable */
   archivedAt: string | null;
@@ -1819,6 +1856,24 @@ export type PostApiV1TenantsTidSpacesSpaceIdProjects202 = {
   operation: Operation;
   resource: Project;
   workspace: Workspace;
+};
+
+export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind = typeof PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind[keyof typeof PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind];
+
+
+export const PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind = {
+  zip: 'zip',
+  tar: 'tar',
+} as const;
+
+export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBody = {
+  /** @maxLength 200 */
+  display_name?: string;
+  source: Blob | File;
+  source_kind: PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind;
+  /** @maxLength 4096 */
+  summary?: string;
+  target_skill_id?: string;
 };
 
 export type DeleteApiV1TenantsTidWorkspacesWidBody = {
