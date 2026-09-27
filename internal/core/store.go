@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/wanglongan587/cloud/internal/skillstore"
 )
 
 // Object is a JSON resource; database column names are converted at the persistence boundary.
@@ -91,6 +93,12 @@ type Store struct {
 	// Signals carries at-most-once work hints to the lease-holding Controller's Watch stream;
 	// clone requests stay durable in PostgreSQL whether or not a hint is delivered.
 	Signals *ControlHub
+
+	// SkillsObjectStore is the provider-neutral Object Storage port consumed by the Skill
+	// ingestion saga (internal/skillstore). It is nil by default ("Unavailable"); integration
+	// wires the in-memory fakestore and production a real provider adapter. The saga is the only
+	// consumer; no package bytes ever enter a database transaction.
+	SkillsObjectStore skillstore.ObjectStore
 }
 
 // NewStore obtains the injected SQL pool without creating or migrating schema.

@@ -46,6 +46,18 @@
   - `clone_executions`：Controller 派发前登记的执行（每个请求恰一个执行，身份为 Controller 选择的 opaque 字符串）、输入与终态结果、登记时的租约 epoch。
   - `clone_event_receipts`：Node 原事件的精确收据 `(execution, sequence, event)`，是确认 Node 的唯一依据。
   - `control_submissions`：每个状态变更提交的身份、请求摘要与记录的响应；同身份同内容回放响应，不重新应用。
+- **`0015_skills.sql`**（append-only，排在 `0013` 之后）：Cloud Skills 的 Workspace 归属领域与持久化地基，对应 `specs/decisions/cloud/skills/0-cloud-skills.md`：
+  - `skills`：归属恰好一个 Collaboration Workspace（`collab_workspaces`，而非运行时 `workspaces` 表）的可变业务资源；active Skill 的 `(workspace_id, canonical_name)` 由部分唯一索引约束，软删除后释放该名称。
+  - `skill_revisions`：某 Skill 的不可变 canonical content 快照（刻意不含 `version`/`updated_at`/`deleted_at`）；`UNIQUE(skill_id, digest_algorithm, content_digest)` 令同一 Skill 同一 digest 只存在一个 revision，不同 Skill 相同内容仍为独立业务 revision。
+  - `skill_ingestions`：journal-first 的上传/导入 saga evidence，状态 `planned→storing→verified→committed/failed`，与 SkillRevision 严格分离。
+  - `skills.current_revision_id` 复合外键 `(current_revision_id, id) → skill_revisions(id, skill_id)` 保证指针只能指向本 Skill 的 revision；`skills.workspace_id` 由 `skill_immutable` 触发器禁止原地变更（跨 Workspace 移动只能 copy/export/import 新 Skill）。
+  - 刻意不创建 AgentSkillBinding / ExecutionSkillBinding / Object Storage 表；signed RetrievalCapability 属于 bearer credential，不持久化。
+- **`0016_skill_ingestion_idempotency.sql`**（append-only，排在 `0015` 之后；对应 `specs/decisions/cloud/skills/20260927-canonical-ingestion-saga.md` Schema 一节）：对 `skill_ingestions` 的四个 additive 变更，实现 canonical ingestion saga（Phase 2）的幂等与恢复：
+  - `canonical_name`（nullable，`IS NULL OR length BETWEEN 1 AND 200`）：candidate 的稳定身份分量（D6/D11），是 per-candidate 幂等 namespace `(workspace_id, idempotency_key, canonical_name)` 的一部分；此处先 nullable 以兼容 Step 1A 的历史/测试行（唯一索引对 NULL 视作互异），ingestion 管线总是写入非空值，后续 forward migration 可收紧为 `NOT NULL`。
+  - `request_fingerprint`（`IS NULL OR length BETWEEN 1 AND 128`）：语义请求指纹（D10），`(target_skill_id, display_name, summary, content_digest, package_digest)` 的 domain-separated、length-prefixed SHA-256 hex，是 replay-vs-conflict（D22）的 durable 判定依据。
+  - `activation_outcome`（`IS NULL OR IN ('activated','activation_conflict')`）：activation CAS 结果的 durable 表示（D20）；非 `committed` 态恒为 NULL。
+  - 唯一索引 `skill_ingestion_candidate_uniq(workspace_id, idempotency_key, canonical_name)`：确定、并发安全的 per-candidate 幂等身份，是恢复路径「确定性命中既有 ingestion」的前提。
+  - 本文件不修改 `0015_skills.sql`。
 
 ## 校验和完整性与不可变性
 

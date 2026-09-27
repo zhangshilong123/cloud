@@ -1,0 +1,1655 @@
+# Ora Cloud Skills — Implementation Plan
+
+Status: **Approved design baseline / ready for implementation**
+
+Purpose: this file is the execution, audit, and acceptance basis for the Cloud Skills work.
+An implementation agent MUST read this file first, then the nearest `AGENTS.md`, relevant approved ADRs/specs/tests/docs, before editing code.
+
+---
+
+## 0. Operating protocol
+
+Implementation workflow:
+
+1. Read this `plan.md`.
+2. Read repository rules:
+   - root `AGENTS.md`
+   - `specs/AGENTS.md` before any `specs/` change
+   - `frontend/AGENTS.md` before any `frontend/` change
+   - nearest nested `AGENTS.md` files
+3. Inspect relevant approved ADRs, core test cases, current implementation, migrations, API contracts, and existing tests.
+4. Implement the smallest coherent change that satisfies this plan.
+5. If implementation conflicts with this plan, an approved ADR, repository rules, an immutable compatibility boundary, or current authoritative implementation facts, **STOP and report the conflict. Do not silently reinterpret the plan.**
+6. Ordinary implementation details may be chosen autonomously.
+7. Any semantic change involving schema, ownership, authorization, transaction boundaries, external effects, recovery, idempotency, compatibility, execution inputs, or protected behavior requires discussion and an update to this plan before implementation proceeds.
+8. Run all applicable repository gates.
+9. Audit the final diff against this plan and report each acceptance item as PASS / FAIL / NOT APPLICABLE.
+
+This plan does not override repository `AGENTS.md`, approved ADRs, or compatibility requirements.
+
+---
+
+# 1. Goal
+
+Add first-class **Cloud Skills** with:
+
+- Collaboration Workspace ownership.
+- Directory and archive import.
+- Recursive discovery of multiple Skills.
+- Immutable Skill content revisions in Object Storage.
+- PostgreSQL business metadata and recovery evidence.
+- Persistent Agent Skill assignment.
+- Immutable per-Execution SkillRevision snapshots.
+- Direct Node retrieval using short-lived read-only retrieval capabilities.
+- Verified Node content cache.
+- Per-Attempt Agent-native Skill materialization.
+- Hard pre-spawn readiness gating.
+- Explicit retry semantics using immutable Execution inputs and new Attempts.
+
+The design may use Multica implementation experience as evidence, but Ora must preserve Ora's own architecture and invariants.
+
+Core principle:
+
+> Migrate capability, not architecture.
+
+---
+
+# 2. Terminology and ownership boundaries
+
+The implementation MUST distinguish these concepts explicitly.
+
+## 2.1 Collaboration Workspace
+
+Product collaboration / authorization boundary.
+
+- A Skill belongs to exactly one Collaboration Workspace.
+- Workspace ownership is resolved and enforced in Cloud.
+- A Skill cannot move between Collaboration Workspaces via ordinary update.
+- Transfer between Workspaces means copy/export/import and creates a distinct business resource.
+
+Do not confuse Collaboration Workspace with Runtime Workspace or Desktop `EffectScope::Workspace`.
+
+## 2.2 Runtime Workspace
+
+Project-scoped runtime checkout/worktree/runtime lifecycle concept.
+
+Cloud Skills ownership MUST NOT be assigned to Runtime Workspace.
+
+## 2.3 Skill
+
+Stable mutable business resource owned by one Collaboration Workspace.
+
+## 2.4 SkillRevision
+
+Immutable canonical package snapshot belonging to one Skill.
+
+## 2.5 AgentSkillBinding
+
+Mutable Agent configuration describing which Skills future Executions should use by default.
+
+## 2.6 ExecutionSkillBinding
+
+Immutable execution fact describing the exact SkillRevision used by one Execution.
+
+## 2.7 Execution
+
+Logical execution with immutable resolved inputs.
+
+## 2.8 Attempt
+
+One physical attempt to execute an Execution.
+
+Retries create new Attempts under the same Execution. They do not implicitly create a new Execution or re-resolve mutable Agent/Skill configuration.
+
+## 2.9 SkillIngestion
+
+Durable upload/import saga evidence for one candidate Skill.
+
+## 2.10 VerifiedSkillBundle
+
+Node-local verified immutable content derived from a SkillRevision. It is not authoritative business state.
+
+## 2.11 ExecutionSkillProjection
+
+Attempt-scoped Agent-visible filesystem projection derived from verified Skill content.
+
+---
+
+# 3. Authoritative persistence and storage
+
+## 3.1 PostgreSQL
+
+PostgreSQL is authoritative for:
+
+- Skill business metadata.
+- SkillRevision metadata.
+- AgentSkillBinding.
+- ExecutionSkillBinding.
+- SkillIngestion/recovery evidence.
+- Execution / Attempt durable state.
+- authorization/lifecycle/version/idempotency metadata.
+
+PostgreSQL MUST NOT be used to store arbitrary Skill package bytes.
+
+## 3.2 Object Storage
+
+Object Storage is authoritative for immutable canonical Skill package bytes.
+
+Objects MUST be immutable once published.
+
+Do not overwrite an existing immutable revision object.
+
+## 3.3 Node filesystem
+
+Node cache, staging directories, and execution projections are derived state.
+
+Loss of all Node-local Skill data MUST NOT corrupt Cloud business state.
+
+---
+
+# 4. Skill model
+
+Recommended semantic shape:
+
+```text
+Skill
+├─ id
+├─ workspace_id
+├─ canonical_name
+├─ display_name
+├─ summary
+├─ icon / tags / board metadata as supported by repository conventions
+├─ current_revision_id
+├─ version
+├─ created_by
+├─ created_at
+├─ updated_at
+└─ deleted_at
+```
+
+Requirements:
+
+- exactly one Collaboration Workspace owner;
+- mutable business/UI metadata;
+- soft delete;
+- optimistic concurrency using existing repository conventions;
+- `display_name` does not define package identity;
+- `canonical_name` is derived from validated `SKILL.md.name`;
+- changing board/UI metadata MUST NOT mutate a SkillRevision or `SKILL.md`;
+- ordinary update MUST NOT change `workspace_id`.
+
+---
+
+# 5. Workspace Skill identity and matching
+
+## 5.1 Active-name uniqueness
+
+Within one Collaboration Workspace, active Skills MUST have unique canonical package names.
+
+Semantic constraint:
+
+```text
+(workspace_id, canonical_name)
+unique among non-deleted Skills
+```
+
+Use the repository-supported PostgreSQL mechanism for this invariant.
+
+## 5.2 Batch import matching
+
+For directory/archive batch import:
+
+```text
+(workspace_id, canonical SKILL.md.name)
+```
+
+is the Skill matching key.
+
+If no active Skill matches:
+
+- create a new Skill;
+- create/reuse its first SkillRevision as appropriate;
+- activate the resulting revision.
+
+If an active Skill matches:
+
+- treat the candidate as new content for that existing Skill.
+
+## 5.3 Explicit update matching
+
+For an explicit "update this Skill" operation:
+
+```text
+target_skill_id
+```
+
+is authoritative.
+
+A changed `SKILL.md.name` does not cause heuristic rename detection.
+
+The update must still satisfy same-Workspace canonical-name uniqueness.
+
+## 5.4 No heuristic rename inference
+
+Do not infer rename based on directory path, similar description, similar bytes, content similarity, or prior display name.
+
+## 5.5 Display name
+
+`display_name` is mutable Workspace metadata and MUST NOT participate in import matching.
+
+---
+
+# 6. SkillRevision model and deduplication
+
+Recommended semantic shape:
+
+```text
+SkillRevision
+├─ id
+├─ skill_id
+├─ workspace_id             # optional denormalization if useful for auth/query
+├─ content_digest
+├─ digest_algorithm
+├─ size_bytes
+├─ file_count
+├─ package_format
+├─ package_format_version
+├─ object_locator
+├─ package_name
+├─ package_description
+├─ manifest metadata
+├─ created_by
+└─ created_at
+```
+
+Requirements:
+
+- immutable after creation/ready state;
+- no update-content API;
+- content changes create/reuse another immutable revision;
+- revision identity belongs to a specific Skill.
+
+Strong uniqueness invariant:
+
+```text
+UNIQUE(skill_id, digest_algorithm, content_digest)
+```
+
+## 6.1 Same Skill + same digest
+
+Reuse the existing SkillRevision. Do not create duplicate revision rows.
+
+Repeated imports may create separate SkillIngestion records, but not duplicate SkillRevision records.
+
+## 6.2 Re-importing an older revision
+
+If `R1 = digest A`, `R2 = digest B (current)`, and digest A is imported again:
+
+- reuse R1;
+- activation may move `current_revision_id` back to R1;
+- do not create R3 with the same bytes as R1.
+
+## 6.3 Different Skills + same digest
+
+Different Skill business resources remain distinct. Physical object storage and Node caches MAY deduplicate by digest, but business identity/ownership MUST NOT merge.
+
+---
+
+# 7. SkillIngestion and batch import
+
+Skill upload/import is a saga, not a transaction spanning PostgreSQL and Object Storage.
+
+A candidate Skill uses its own SkillIngestion and its own short database transactions.
+
+Conceptual fields:
+
+```text
+SkillIngestion
+├─ id
+├─ workspace_id
+├─ target_skill_id?
+├─ idempotency_key
+├─ source_type
+├─ expected/canonical digest as known
+├─ stable object identity / locator metadata
+├─ state
+├─ error_code?
+├─ error_detail?
+├─ created_by
+├─ created_at
+└─ updated_at
+```
+
+Exact state names may follow repository conventions, but semantics must cover intent recorded, external object work pending/in progress, content verified, revision committed/activated, and failed/recoverable evidence.
+
+Do not put transient ingestion failure states into immutable SkillRevision rows.
+
+## 7.1 Batch behavior
+
+Recursive directory/archive import uses:
+
+```text
+DISCOVER
+→ VALIDATE CANDIDATES
+→ APPLY EACH CANDIDATE INDEPENDENTLY
+→ BATCH SUMMARY
+```
+
+Batch semantics are **partial success**.
+
+One invalid candidate MUST NOT roll back other successful candidates.
+
+A batch-level database transaction spanning all Skills is prohibited.
+
+A persistent batch table is not required by this plan unless existing API/lifecycle conventions make it necessary. Per-candidate ingestion evidence is required.
+
+Batch response/reporting must summarize at least discovered candidates, created, updated/activated, unchanged, and failed.
+
+---
+
+# 8. Upload/import discovery
+
+Accepted V1 sources:
+
+- local directory selection;
+- archive upload.
+
+Both MUST normalize into the same canonical virtual file tree and canonical package representation.
+
+## 8.1 Recursive directory discovery
+
+Recursively find `SKILL.md`.
+
+The direct parent of each `SKILL.md` is one candidate Skill root. The entire subtree under that root belongs to the candidate.
+
+Nested Skill roots are unsupported in V1 and MUST fail validation rather than be guessed or merged.
+
+## 8.2 Archive discovery
+
+Archive entries are interpreted as a virtual tree and use the same Skill-root discovery semantics as directory import.
+
+Do not extract untrusted archives directly to a final filesystem tree before validating entry paths/types/limits.
+
+---
+
+# 9. Canonical package contract
+
+## 9.1 Root requirements
+
+A canonical Skill package is an independent file tree whose root contains `SKILL.md`.
+
+## 9.2 Canonical paths
+
+Stored package paths MUST be relative POSIX-style paths.
+
+Forbidden: absolute paths, `.` components, `..` components, empty path components, NUL, Windows drive prefixes, ambiguous separators, and path traversal.
+
+Input Windows separators may be normalized at the ingestion boundary before canonical validation.
+
+Normalize once, validate canonical form, and store only canonical form.
+
+## 9.3 Collisions
+
+After canonicalization:
+
+- duplicate canonical paths are invalid;
+- case-insensitive path collisions are invalid for portability across filesystems.
+
+Canonical identity itself remains case-sensitive unless an approved repository/spec rule says otherwise.
+
+## 9.4 Filesystem entry types
+
+V1 supports only regular files and directories.
+
+V1 rejects symlinks, hardlink archive entries, devices, FIFOs, sockets, and other special filesystem nodes.
+
+## 9.5 Text and binary
+
+`SKILL.md` must be valid UTF-8, parse required package metadata, contain valid `name`, and satisfy the accepted Skill metadata schema.
+
+Other package files may contain arbitrary bytes.
+
+## 9.6 No content rewriting during canonicalization
+
+Canonicalization MUST NOT silently rewrite Markdown, reorder YAML/frontmatter, normalize newlines, inject a name, or reformat user files.
+
+Canonicalization defines tree/path/manifest/package representation, not author-file formatting.
+
+---
+
+# 10. Canonical digest
+
+Do not hash raw uploaded zip/tar bytes as Skill content identity.
+
+Digest is computed from the canonical file tree.
+
+Required properties:
+
+- versioned digest scheme;
+- per-file digest;
+- canonical deterministic ordering by canonical path;
+- unambiguous encoding such as length-prefixed fields or another explicitly canonical encoding.
+
+Conceptual manifest:
+
+```text
+CanonicalManifest
+├─ manifest_version
+└─ files[]
+   ├─ path
+   ├─ size
+   └─ sha256
+```
+
+Then:
+
+```text
+content_digest = SHA256(canonical-manifest-encoding)
+```
+
+Archive metadata such as mtime, uid/gid, entry order, compression method/level, and comments MUST NOT affect Skill content identity.
+
+Directory input, ZIP input, and other future adapters producing identical canonical files/bytes must produce the same digest.
+
+---
+
+# 11. Canonical Object Storage package
+
+The authoritative runtime object MUST be a versioned canonical Ora Skill package, not the user's raw transport archive.
+
+Conceptual identity:
+
+```text
+package_format = ora-skill-package
+package_format_version = 1
+```
+
+Exact serialization/container format may be chosen during implementation, but it MUST preserve arbitrary bytes, permit safe bounded materialization, be versioned, and be independently integrity-verifiable.
+
+Node consumes canonical packages only and MUST NOT need to understand browser directory upload, ZIP upload, or other source transport formats.
+
+---
+
+# 12. Quotas and archive safety
+
+V1 MUST enforce explicit configurable limits for at least:
+
+- maximum files per Skill;
+- maximum single file size;
+- maximum total uncompressed Skill size;
+- maximum `SKILL.md` size;
+- maximum path length;
+- maximum path component length;
+- maximum compressed archive request size where applicable;
+- maximum uncompressed archive output.
+
+Limits must be enforced before a SkillRevision is committed/activated.
+
+Archive processing MUST defend against traversal/zip-slip, absolute paths, special nodes, symlink/hardlink tricks, duplicate normalized paths, case-insensitive collisions, and decompression bombs.
+
+Exact default numeric values are implementation details unless an existing repository/spec contract already defines them.
+
+---
+
+# 13. Upload/update transaction semantics
+
+Never hold a PostgreSQL transaction or database lock across Object Storage/HTTP/filesystem/Node/process work.
+
+Required saga shape:
+
+```text
+DB TX #1
+  authorize
+  validate stable request identity / Idempotency-Key
+  persist ingestion intent and stable external identity/evidence
+COMMIT
+
+Object Storage
+  upload canonical immutable object
+  verify result / reconcile ambiguous outcome
+
+DB TX #2
+  create or reuse immutable SkillRevision
+  finalize ingestion
+  CAS Skill.current_revision_id using Skill.version
+COMMIT
+```
+
+Requirements:
+
+- stable object identity before external mutation;
+- retry/reconcile ambiguous object-store results by stable identity;
+- never guess success;
+- never overwrite an immutable revision object;
+- activation occurs only after verified content exists;
+- activation conflict does not invalidate an otherwise valid immutable revision;
+- external effects remain outside DB transactions.
+
+POST/DELETE and optimistic concurrency must follow current repository conventions.
+
+---
+
+# 14. Agent Skill configuration
+
+V1 selection model:
+
+```text
+Agent persistent Skill defaults only
+```
+
+No per-run add/remove Skill override in V1.
+
+Conceptual binding:
+
+```text
+AgentSkillBinding
+├─ agent_id
+├─ skill_id
+├─ enabled
+├─ created_at
+└─ updated_at
+```
+
+Requirements:
+
+- binding references Skill business identity, not a revision;
+- Agent configuration answers: "which Skills should future Executions use?";
+- disabled binding remains configuration but is excluded from effective execution selection;
+- binding does not contain runtime paths or object-store details.
+
+---
+
+# 15. Execution Skill snapshot
+
+At Execution creation/admission time Cloud MUST:
+
+1. authorize the caller and owning Collaboration Workspace;
+2. resolve the Agent's enabled Skill assignments;
+3. add platform-required Skills if such a policy exists;
+4. resolve each selected Skill to an exact immutable current SkillRevision;
+5. persist immutable ExecutionSkillBinding rows;
+6. commit the execution input snapshot before dispatch.
+
+Conceptual model:
+
+```text
+ExecutionSkillBinding
+├─ execution_id
+├─ skill_id
+├─ skill_revision_id
+├─ content_digest
+├─ size_bytes
+├─ package_format
+├─ package_format_version
+└─ created_at
+```
+
+Once committed, an ExecutionSkillBinding is immutable.
+
+Strong invariants:
+
+- Controller claim/dispatch MUST NOT recompute Skills from mutable AgentSkillBinding.
+- Node MUST NOT resolve "current SkillRevision".
+- Updating Agent Skill assignments affects only future Executions.
+- Updating `Skill.current_revision_id` affects only future Executions.
+- Soft deleting a Skill after snapshot creation MUST NOT silently change existing Execution inputs.
+- retry preserves exact ExecutionSkillBinding rows.
+
+---
+
+# 16. Execution vs Attempt recovery model
+
+Execution owns immutable business inputs. Attempt is a physical attempt.
+
+```text
+Execution E
+├─ immutable inputs
+├─ immutable ExecutionSkillBinding[]
+├─ Attempt 1
+├─ Attempt 2
+└─ ...
+```
+
+Retry semantics:
+
+```text
+Retry
+= new Attempt under same Execution
+= same exact immutable inputs
+```
+
+`Run Again` / creating a new logical execution:
+
+```text
+= new Execution
+= resolve current Agent configuration and current Skill revisions again
+```
+
+Do not conflate Retry and Run Again.
+
+Transient retrieval failures MAY retry inside the same Attempt. Once an Attempt is failed, V1 MUST NOT resume that same failed Attempt. A new Attempt may be created according to retry policy.
+
+Failure taxonomy must distinguish permanent Execution/input failures, transient retrieval failures, and Node-local/environment failures.
+
+A Node-local failure such as local disk exhaustion MUST NOT automatically imply that immutable Execution input is invalid.
+
+V1 does not implement durable file-by-file materialization checkpoints. Partial staging/projection state is disposable.
+
+---
+
+# 17. Cloud → Node Skill contract
+
+Keep durable execution identity separate from ephemeral delivery authorization.
+
+## 17.1 SkillBundleRef
+
+```text
+SkillBundleRef
+├─ skill_revision_id
+├─ content_digest
+├─ size_bytes
+├─ package_format
+├─ package_format_version
+└─ retrieval
+```
+
+## 17.2 RetrievalCapability
+
+```text
+RetrievalCapability
+├─ method
+├─ url
+├─ expires_at
+└─ optional required headers
+```
+
+V1 implementation may use short-lived signed HTTPS GET URLs.
+
+The protocol MUST NOT be named or modeled as S3-specific.
+
+## 17.3 Credential/security classification
+
+A signed URL is a bearer credential.
+
+Therefore full capability URL MUST NOT be stored in PostgreSQL, durably journaled, logged, included in user-facing errors, or returned in durable results/evidence.
+
+It MUST be short-lived, read-only, scoped to the exact immutable object, and grant no list/write/delete rights.
+
+This is an explicit evolution of the existing "business protocol does not receive secrets" model and requires an approved ADR/spec change before implementation.
+
+Do not silently add credentials to an existing protocol.
+
+## 17.4 Capability refresh
+
+Capability expiry MUST NOT change Execution identity.
+
+Refresh conceptually identifies:
+
+```text
+execution_id
+attempt_id
+skill_revision_id
+```
+
+Cloud verifies that the Attempt belongs to the Execution, the Execution contains this exact SkillRevision binding, and the Attempt is still eligible for retrieval.
+
+Cloud then issues a new capability for the same immutable object.
+
+Refresh MUST NOT consult `Skill.current_revision_id`, re-resolve AgentSkillBinding, or switch revisions.
+
+Exact route/transport shape must follow existing repository conventions.
+
+---
+
+# 18. Authorization model
+
+Authorization remains a Cloud responsibility.
+
+Requirements:
+
+- Skill ownership is derived server-side from Skill → Collaboration Workspace.
+- Never trust client-provided workspace/tenant ownership claims for authorization.
+- Cross-Workspace existence must not leak through error differences.
+- Execution admission resolves authorization before Skill data reaches Controller/Node.
+- Controller and Node are not given tenant/user/member authorization responsibilities.
+- Node trusts the already-authorized immutable execution descriptor.
+- Capability issuance/refresh is authorized against the durable ExecutionSkillBinding.
+
+Node does not independently re-check Collaboration Workspace membership.
+
+---
+
+# 19. Data plane
+
+Control plane:
+
+```text
+Cloud
+→ Controller
+→ Node
+```
+
+Data plane for Skill bytes:
+
+```text
+Node
+→ Object Storage
+```
+
+Controller MUST NOT proxy Skill package bytes.
+
+Cloud API MUST NOT become the normal package-byte proxy.
+
+Long-lived Object Storage credentials MUST NOT be placed in execution business messages.
+
+---
+
+# 20. Node verified content cache
+
+V1 includes a Node-local digest-addressed verified cache.
+
+Semantic identity:
+
+```text
+digest_algorithm + content_digest
+```
+
+Business ownership MUST NOT be inferred from cache identity.
+
+Different Workspaces/Skills may physically reuse identical verified bytes while remaining separate business resources.
+
+Required behavior:
+
+```text
+cache hit
+→ verify evidence/content as required
+→ use immutable cached content
+
+cache miss
+→ acquire capability
+→ download to staging
+→ verify size
+→ verify digest
+→ atomic publish to cache
+```
+
+Requirements:
+
+- per-digest population concurrency control;
+- atomic publish;
+- corrupted entries are never treated as valid;
+- cache is immutable after verified publish;
+- cache is derived/disposable state;
+- deleting the cache only causes re-download, not business-state loss.
+
+Cache GC is independent from Execution projection cleanup.
+
+V1 must include a bounded retention mechanism or a clearly safe initial GC policy; do not create an intentionally unbounded permanent cache.
+
+Exact quota/LRU/age policy is an implementation detail unless existing Node conventions dictate it.
+
+---
+
+# 21. Node materialization contract
+
+## 21.1 Separation of states
+
+```text
+Object Storage
+= authoritative immutable bytes
+
+Node Verified Cache
+= verified reusable derived bytes
+
+ExecutionSkillProjection
+= Attempt-scoped Agent-visible filesystem
+```
+
+## 21.2 AgentRuntimeAdapter
+
+Agent-specific Skill discovery conventions belong to the Node Agent runtime adapter layer.
+
+Conceptual responsibility:
+
+```text
+VerifiedSkillBundle[]
+→ provider/runtime-specific filesystem/config projection
+→ launch specification
+```
+
+Cloud/SkillRevision must not encode provider-specific filesystem paths.
+
+## 21.3 Per-Attempt projection
+
+Each Attempt gets its own managed Skill projection.
+
+Agents MUST NOT consume or mutate the shared verified cache directly.
+
+Projection implementation may use copy/reflink/mount/etc., but MUST preserve cache immutability. Writable hardlink semantics that can mutate the shared cache are prohibited.
+
+## 21.4 Projection staging and publish
+
+Never construct required Skill content directly in the final Agent-visible path.
+
+Required semantic sequence:
+
+```text
+projection staging
+→ write complete tree
+→ validate
+→ finalize
+→ atomic publish
+→ projection ready
+```
+
+Partial projection MUST NOT be Agent-visible. A stale staging tree after crash is disposable.
+
+## 21.5 Content preservation
+
+Canonical Skill package files should remain byte-preserving in V1.
+
+Do not silently rewrite `SKILL.md` during normal projection.
+
+If a specific Agent runtime requires deterministic transformation, it must be modeled explicitly as an AgentRuntimeAdapter projection transformation and covered by tests/spec evidence.
+
+## 21.6 Ownership
+
+Node may delete/replace only paths it owns for the relevant Attempt projection.
+
+Unknown/user-created files are Preserved, not implicitly overwritten or deleted.
+
+Do not copy Desktop Effect architecture wholesale; only preserve required capabilities such as ownership, evidence, and fail-closed readiness.
+
+---
+
+# 22. Preparation readiness barrier
+
+Attempt preparation has a hard pre-spawn barrier.
+
+Conceptual durable phases may be:
+
+```text
+PLANNED
+→ PREPARING
+→ READY
+→ STARTING
+→ RUNNING
+→ terminal
+```
+
+Exact existing state names should be reused where possible. Do not introduce a parallel state machine unnecessarily.
+
+`READY` semantically requires:
+
+- repository/runtime input ready;
+- every required SkillRevision resolved;
+- every required Skill bundle locally verified;
+- every required Agent-native Skill projection atomically published;
+- required Agent runtime configuration prepared.
+
+Strong invariant:
+
+> Agent process MUST NOT spawn unless all required Skill materialization is ready.
+
+A required Skill projection failure MUST fail preparation. It MUST NOT be downgraded to warning and continue with stale/missing Skills.
+
+There are no optional Skills in V1 unless this plan is explicitly updated.
+
+READY is an audit/consumption barrier, not permission to resume a failed Attempt after crash.
+
+---
+
+# 23. Script execution boundary
+
+Upload, normalization, validation, hashing, storage, retrieval, caching, and materialization MUST NOT EXECUTE SKILL CONTENT.
+
+Scripts, package manifests, binaries, and WASM are bytes during ingestion/materialization.
+
+Execution occurs only later through the Agent/runtime tool boundary.
+
+The current Node environment does not provide a general security sandbox. Do not claim Skill isolation that does not exist.
+
+Any future security sandbox/containment change requires its own approved architecture decision.
+
+---
+
+# 24. Secret handling
+
+Required checks:
+
+- no signed retrieval capability in DB;
+- no capability in logs;
+- no capability in telemetry/error strings;
+- no capability in fixtures/snapshots;
+- no capability in process journal;
+- no object-store long-lived credential in business protocol;
+- no credential embedded in repository/Skill URLs;
+- sanitized errors across Cloud/Controller/Node boundaries.
+
+Tests must cover accidental logging/serialization where practical.
+
+---
+
+# 25. Soft delete and retention
+
+Skill is soft-deleted according to repository conventions.
+
+Soft deletion:
+
+- removes it from ordinary future selection/import matching as appropriate;
+- does not invalidate immutable ExecutionSkillBinding rows that already exist;
+- does not require immediate deletion of immutable revision objects.
+
+Object retention/garbage collection must be separate from business deletion and must not delete content still required for active/nonterminal Executions, audit/recovery retention requirements, or retained immutable revisions according to policy.
+
+Exact long-term object retention policy may be implemented later if not needed for V1 correctness, but unsafe eager deletion is prohibited.
+
+---
+
+# 26. Idempotency
+
+Creation/import APIs must follow existing `Idempotency-Key` rules.
+
+Important distinction:
+
+```text
+Idempotency-Key
+!=
+content deduplication
+```
+
+Same idempotency key + same request replays stored response according to repository rules.
+
+Same idempotency key + different request conflicts.
+
+Different idempotency keys with identical canonical Skill content may produce multiple SkillIngestion attempts, but must converge to the same existing SkillRevision for the same Skill/digest.
+
+External Object Storage mutation must use stable object identity so ambiguous results can be reconciled safely.
+
+---
+
+# 27. Compatibility and ADR requirements
+
+This change introduces capabilities not currently represented in Cloud/Controller/Node specs:
+
+- first-class Cloud Skill;
+- immutable SkillRevision package in Object Storage;
+- exact SkillRevision execution snapshot;
+- Node non-Git artifact retrieval;
+- digest verification;
+- Node Skill cache;
+- Agent runtime Skill materialization;
+- preparation READY barrier;
+- ephemeral signed retrieval capability/credential transport;
+- Execution/Attempt retry semantics as they relate to Skill inputs.
+
+Before or together with implementation, update/add the relevant approved ADRs and core test evidence.
+
+The signed retrieval capability is especially important:
+
+> Existing clone protocol rules say business protocol does not receive secrets. A signed URL is a bearer credential. This plan intentionally introduces a constrained ephemeral retrieval credential, so the architecture/spec must explicitly approve that evolution.
+
+Do not treat this as a backward-compatible implementation detail.
+
+---
+
+# 28. API and contract discipline
+
+When public/internal routes or payloads change:
+
+- update router route definitions;
+- update internal contract definitions;
+- regenerate OpenAPI;
+- regenerate frontend API client;
+- do not hand-edit generated artifacts;
+- add contract/integration tests.
+
+Strict request decoding remains required.
+
+Server-owned fields such as workspace ownership, revision object locator, digest after canonicalization, and execution binding identity must not be accepted as untrusted client authority.
+
+---
+
+# 29. Migration rules
+
+- Read migration conventions before editing.
+- Applied migrations are immutable/checksummed.
+- Add forward migrations only.
+- PostgreSQL constraints should enforce invariants where practical.
+- Test fresh database and upgrade from previous schema.
+- Do not run DDL dynamically at server startup.
+
+Likely new constraints include, subject to repository schema conventions:
+
+- active Workspace/canonical-name uniqueness;
+- SkillRevision `(skill_id, digest_algorithm, content_digest)` uniqueness;
+- foreign-key ownership relationships;
+- Attempt numbering/Execution relationship invariants.
+
+Exact table names must follow current domain naming conventions discovered during implementation.
+
+---
+
+# 30. Transaction and external-effect rules
+
+All DB transactions must remain short and database-only.
+
+Never hold transaction, row lock, or advisory lock across Object Storage, HTTP, filesystem, Controller, Node, process, or Git.
+
+Persist stable effect intent/evidence before external mutation when recovery requires it.
+
+Ambiguous external results must be reconciled by stable identity.
+
+Use existing lease/epoch/version fencing rules for stale writers.
+
+---
+
+# 31. Frontend requirements
+
+If the frontend Skills board/import UI is part of this implementation wave:
+
+- read `frontend/AGENTS.md`;
+- preserve module documentation rules;
+- update Chinese `README.md` and English `README.en.md` for changed/new modules as required;
+- add module tests;
+- use generated API client;
+- do not hand-edit generated API output.
+
+UI semantics must reflect backend truth:
+
+- one target Collaboration Workspace per batch;
+- recursive discovery;
+- per-candidate result;
+- created / updated / unchanged / failed summary;
+- display name edits do not mutate package metadata;
+- revision/content errors are per candidate.
+
+Do not expose signed retrieval capabilities to the browser unless a separately approved product flow requires it. Node retrieval capabilities are not user-facing download links.
+
+---
+
+# 32. Testing requirements
+
+Tests must cover the actual contract boundaries.
+
+## 32.1 Canonicalization
+
+- directory and archive with identical files → same canonical digest;
+- Windows separator normalization;
+- traversal rejection;
+- absolute path rejection;
+- duplicate normalized path rejection;
+- case-insensitive collision rejection;
+- nested Skill root rejection;
+- symlink/special-node rejection;
+- UTF-8 requirement for `SKILL.md`;
+- binary supporting file preservation;
+- file/size/decompression limits;
+- archive-bomb limit behavior.
+
+## 32.2 Skill identity/revisions
+
+- same Workspace + same canonical name → same Skill;
+- explicit target_skill_id update semantics;
+- display_name does not affect matching;
+- same Skill + same digest → existing revision reused;
+- older digest re-import → existing old revision reused;
+- different Skills + same digest → distinct revision rows/business identity;
+- concurrent same-content ingestion converges under DB constraints/idempotency.
+
+## 32.3 Ingestion/recovery
+
+- object upload succeeds then DB finalization fails;
+- ambiguous object-store result reconciles by stable identity;
+- activation CAS conflict leaves valid revision without corrupting current pointer;
+- batch partial success;
+- failed candidate does not roll back siblings.
+
+## 32.4 Authorization
+
+- cross-Workspace Skill lookup/import/update does not leak existence;
+- Execution snapshot authorization occurs in Cloud;
+- capability cannot be minted/refreshed for revision not bound to Execution;
+- expired capability refresh preserves exact revision;
+- deleted/updated current Skill does not alter existing Execution binding.
+
+## 32.5 Execution snapshot
+
+- Agent binding changes after Execution creation do not affect Execution;
+- Skill current revision changes after Execution creation do not affect Execution;
+- Retry/new Attempt uses same ExecutionSkillBinding;
+- Run Again/new Execution resolves current configuration.
+
+## 32.6 Node retrieval/cache
+
+- cache miss → download → verify → publish;
+- cache hit avoids retrieval;
+- wrong size fails;
+- wrong digest fails;
+- corrupt cache is not consumed;
+- concurrent population is safe;
+- capability expiry/refresh retries same revision;
+- credential is not persisted/logged;
+- cache deletion causes safe re-download.
+
+## 32.7 Projection/readiness
+
+- projection built in staging;
+- partial staging is never Agent-visible;
+- AgentRuntimeAdapter maps to correct native layout;
+- required Skill failure prevents spawn;
+- READY required before spawn;
+- crash/stale staging rebuild is deterministic;
+- cache cannot be mutated via writable projection;
+- unknown/user files are not overwritten/deleted.
+
+## 32.8 Race/concurrency
+
+Because this work changes recovery, shared cache, persistence lifecycle, and concurrent ingestion/materialization, run the repository race gate required by `AGENTS.md`.
+
+---
+
+# 33. Non-goals for V1
+
+Unless this plan is explicitly updated, V1 does NOT include:
+
+- global Skills independent of Collaboration Workspace;
+- personal/user-only Skills;
+- moving a Skill between Workspaces by update;
+- per-run temporary Skill add/remove overrides;
+- nested Skill packages;
+- symlink support;
+- executing Skill scripts during ingestion/materialization;
+- a general Node security sandbox;
+- file-level resumable materialization;
+- resumable partial package download;
+- mutable SkillRevision;
+- Node resolving `current_revision`;
+- Controller proxying Skill package bytes;
+- long-lived Object Storage credentials in business protocol;
+- copying Desktop Effect architecture into Node wholesale;
+- treating Workflow as an actor.
+
+---
+
+# 34. Implementation sequencing
+
+## Phase 1 — Specs / ADR closure
+
+Before implementation of new semantics:
+
+1. Read `specs/AGENTS.md`.
+2. Add/update ADRs for:
+   - Cloud Skill ownership/storage/revisions;
+   - execution immutable SkillRevision snapshot;
+   - Object Storage retrieval capability;
+   - credential handling exception/evolution;
+   - Node verified bundle/cache/materialization;
+   - preparation READY barrier and Attempt recovery semantics.
+3. Add/update core test cases for the invariants in this plan.
+4. Keep status/evidence markers accurate.
+
+If approved existing ADRs conflict, STOP and report.
+
+## Phase 2 — Cloud persistence/domain
+
+- migrations;
+- Skill;
+- SkillRevision;
+- AgentSkillBinding;
+- ExecutionSkillBinding;
+- SkillIngestion;
+- constraints/indexes;
+- persistence tests.
+
+## Phase 3 — Canonical ingestion + Object Storage
+
+- directory/archive adapters;
+- virtual tree;
+- discovery;
+- validation;
+- canonical manifest/package;
+- digest;
+- object-store port/adapter;
+- journal-first ingestion saga;
+- partial-success batch behavior.
+
+### Step 2B Object Storage abstraction — port / semantic types / reconciliation core IMPLEMENTED; saga now drives the port
+
+Status: **the frozen abstraction is implemented as code** — the `ObjectStore` port, semantic types
+(`PutRequest`/`PutResult`/`StatResult`/`GetResult`, `Locator`, `Verdict`), the provider-neutral
+`Reconcile` core, and the `internal/skillstore/fakestore` test double, all in `internal/skillstore`
+(+ subpackage). The `internal/core` ingestion saga (Step 2C, below) now drives `PutImmutable`/`Reconcile`
+through `Store.SkillsObjectStore`. There is still **no** production Object Storage provider, SDK dependency,
+configuration key, upload HTTP API, `SKILL.md` discovery, or `RetrievalCapability`, and `0015`
+needs no change. Frozen by `specs/decisions/cloud/skills/20260927-object-storage-abstraction.md`
+(status `proposed`). This subsection is the acceptance contract for the Object Storage work in this
+phase. Step 2B implemented **only** the write-and-verify abstraction layer and its tests; it did not
+mark the ingestion pipeline, provider integration, or Node delivery implemented (the pipeline/saga is
+implemented in Step 2C below; provider integration and Node delivery remain unimplemented).
+
+The acceptance gates below are the full-phase gates; the abstraction-only slice satisfies the pure-semantic
+ones (key derivable with no external I/O, no overwrite path, no `error != nil` retry decision, `DEFINITE_FAILURE`
+only on provable no-effect, `MISMATCH` fail-closed, test double expressiveness) and defers to later steps the
+pipeline/DB-orchestration ones (ingestion state transition, DB TX #2, crash adoption, credential redaction).
+
+**ObjectStore semantic contract.** Three operations only: `PutImmutable(request)`, `Stat(locator)`,
+`Get(locator, bound)`. The request carries the full immutable expectation set — stable locator,
+expected package digest, expected package size, expected content digest, package format, package
+format version, digest algorithm — and each operation's result type must express the whole five-value
+taxonomy below; a bare `(value, error)` is not acceptable. No `List`, `Delete`, `Copy`, `Move`, or
+`Presign` in this slice. No provider-specific naming (`S3*`, `Bucket*`, `AWS*`). Bucket/region/
+credentials come from the injected adapter configuration, never from call arguments or persisted
+data. The port is defined at the consuming boundary and implemented privately under `internal/`; the
+provider client is constructed in `cmd/*` wiring and injected, so domain code never reads provider
+configuration. `PutImmutable` is create-only: a provider without conditional-write support must fail
+closed rather than degrade to unconditional overwrite. Its `created` and `already-exists` outcomes are
+both **non-verifying** — `already-exists` means "this key is occupied", not "the content matches" —
+and only the three verification checks can produce a verified result. Provider `ETag`/checksum/length
+is evidence only, never identity.
+
+**Identity model.** Three layers stay separate: business identity = `SkillRevision.id`; content
+identity = `(digest_algorithm, content_digest)` (the Step 2A tree digest); physical identity = the
+object key. `content_digest` is the tree digest and is NOT `SHA256(package bytes)` — the two must
+never be interchanged. Content identity drives business dedup
+(`UNIQUE(skill_id, digest_algorithm, content_digest)`); physical identity drives physical dedup.
+`size_bytes` / `file_count` describe the canonical tree, not the container.
+
+**Package checksum decision.** `package_digest = SHA256(exact ora-skill-package v1 bytes)`, lowercase
+hex. It is used only to (a) derive the object key, (b) reconcile ambiguous writes, and (c) detect
+byte-level corruption. It is NOT business identity, NOT the revision dedup key, and NOT the Node
+cache key (that stays `digest_algorithm + content_digest`). It needs no new column because the object
+key embeds it.
+
+**Object key decision.**
+`skills/<package_format>/v<package_format_version>/<digest_algorithm>/<package_digest_hex>`
+(e.g. `skills/ora-skill-package/v1/sha256/…` — 99 bytes today, ≤ 277 bytes worst case under the
+`0015` column bounds, so the existing `<= 1024` CHECK holds). The key must be computable before any
+DB transaction or external call; `skillpkg.Build` is a deterministic pure function, so it is. The key
+carries no tenant/workspace/skill/revision/ingestion identity, no timestamp and no random value.
+`PutImmutable` is create-only: a provider without conditional-write support must fail closed rather
+than degrade to unconditional overwrite. Provider `ETag`/checksum/length is evidence only, never
+identity, and can never by itself produce a verified result.
+
+**Reconciliation algorithm.** An ambiguous outcome is never guessed, always probed. Probe the
+persisted `object_locator` (never a re-derived key): `Stat` → `absent` ⇒ `CONFIRMED_ABSENT`; present
+⇒ `Get` with a bounded read, then require all three of `SHA256(bytes) == package_digest`, successful
+`skillpkg.Decode`, and `TreeDigestHex() == content_digest` ⇒ `CONFIRMED_PRESENT_MATCHING`; any
+mismatch ⇒ `MISMATCH`; error ⇒ `INDETERMINATE` with a bounded probe retry budget. Only
+`CONFIRMED_PRESENT_MATCHING` may enter DB TX #2.
+
+**Failure taxonomy.** Five determinate-or-ambiguous outcomes, never `error != nil`:
+`CONFIRMED_PRESENT_MATCHING` / `CONFIRMED_ABSENT` / `MISMATCH` / `DEFINITE_FAILURE` /
+`INDETERMINATE`. `DEFINITE_FAILURE` requires proof that the request had no effect (pre-acceptance
+rejection: DNS, connection refused, 429, auth/validation rejection); anything where the request may
+have been processed is `INDETERMINATE`. `MISMATCH` is determinate and fails closed: never overwrite,
+never delete-and-rewrite, never adopt, never switch keys. `INDETERMINATE` is the only ambiguity and
+stays recoverable. A PUT may be retried only after `ABSENT`, or after a transient `DEFINITE_FAILURE`;
+never after `INDETERMINATE` without a probe, and never after `MISMATCH`. The retry unit is the
+ingestion, not the HTTP request. A crash after a successful PUT but before DB TX #2 must adopt the
+existing correct object — the external object is content-addressed and immutable, so adoption is safe
+and a re-PUT is not. `created` and `already-exists` are both non-verifying PUT outcomes: only the
+three verification checks can produce `CONFIRMED_PRESENT_MATCHING`.
+
+**Transaction boundary.** Unchanged from §13: `skillpkg.Build` runs outside any transaction; DB TX #1
+commits the ingestion intent plus the stable `object_locator` before any external mutation; all
+Object Storage I/O runs outside any transaction, row lock, or advisory lock; DB TX #2 runs only after
+`CONFIRMED_PRESENT_MATCHING`. `skill_ingestions.state` maps as `planned` (post-TX #1, pre-PUT) →
+`storing` (PUT issued or outcome unconverged, i.e. reconcile-required — sourced from every
+`INDETERMINATE`, and from a transient `DEFINITE_FAILURE` while retry budget remains) → `verified`
+(proved `MATCHING`) → `committed` (a durable `SkillRevision` exists) / `failed` (determinate
+permanent failure or `MISMATCH`; a transient `DEFINITE_FAILURE` whose budget is exhausted also lands
+here, with a transient-flavoured `error_code`). Ambiguous results are never recorded as `failed`, and
+`committed` is never recorded without a durable revision.
+
+**Migration requirement.** NONE for this design. `internal/core/migrations/0015_skills.sql` must not
+be modified; its `object_locator` columns already fit the derived key. Any later need for an indexed
+or checked `package_digest` column, or for concurrency fencing beyond
+`UPDATE … WHERE state = <expected>`, requires a NEW forward migration (`0016_*` or later).
+
+**Implementation acceptance gates** (this phase is complete only when all hold):
+
+- [ ] no Object Storage call executes inside a DB transaction, row lock, or advisory lock;
+- [ ] the object key is derivable with no external I/O and contains no business identity;
+- [ ] no code path can overwrite an existing object; a provider lacking conditional writes is refused;
+- [ ] `CONFIRMED_PRESENT_MATCHING` requires all three verification checks; no provider evidence alone
+      can produce it;
+- [ ] retry/failure decisions are driven by the outcome enum; no code path uses `error != nil` to
+      decide whether to retry;
+- [ ] `DEFINITE_FAILURE` is only produced when the request is provably without effect; anything that
+      may have been processed is classified `INDETERMINATE`;
+- [ ] test doubles can express create-only, `already-exists`, `definite-failure` and `ambiguous`;
+      a fake that cannot is not admissible evidence for D7/D10/D11;
+- [ ] an ambiguous result leaves the ingestion in `storing`, never `failed`;
+- [ ] `MISMATCH` fails closed: no revision created, `Skill.current_revision_id` unchanged;
+- [ ] a crash between a successful PUT and DB TX #2 is recovered by adopting the existing object;
+- [ ] provider details, credentials, and `object_locator` never reach user-facing errors;
+- [ ] `0015_skills.sql` is byte-identical to its Step 1A state; no migration was added for this design.
+
+### Step 2C Canonical ingestion saga — IMPLEMENTED
+
+Status: **implemented**. The candidate model, idempotency, transaction boundaries, and crash-recovery semantics
+frozen by `specs/decisions/cloud/skills/20260927-canonical-ingestion-saga.md` (status `proposed`) are now code:
+`internal/skillmeta` (the `SKILL.md` metadata parser), the forward migration
+`0016_skill_ingestion_idempotency.sql` (four additive `skill_ingestions` changes), and the journal-first saga
+`Store.IngestSkill` / `Store.IngestSkills` in `internal/core` (driving the `internal/skillstore` port through
+`Store.SkillsObjectStore`), with 11 real-PostgreSQL integration tests in `integration/skill_ingestion_test.go`.
+There is still **no** upload HTTP API, production Object Storage provider, or `RetrievalCapability`;
+`0015_skills.sql` is byte-identical to its Step 1A state. The directory/archive source adapter and recursive
+`SKILL.md` discovery are delivered in Step 2C.1 (`internal/skillsource` + `Store.IngestSource`).
+This subsection is the acceptance contract for the Step 2C implementation slice.
+
+**SKILL.md metadata contract — implemented (`internal/skillmeta`).** The `canonical_name` derivation gap was
+closed by `specs/decisions/cloud/skills/20260927-skill-md-metadata-contract.md` (status `proposed`), and the
+parser is now implemented in `internal/skillmeta`: `canonical_name = ASCII lowercase(TrimSpace(name))` is the
+single transformation; `name` is required and must be a YAML string matching ASCII `[A-Za-z0-9._-]+` (not
+starting with `.`, ≤ 200 bytes); `description` is optional (string, ≤ 4096 bytes); duplicate keys and invalid
+YAML fail closed; unknown fields are opaque and preserved; `internal/skillpkg` stays frozen and does not parse
+`name`. Compatible with Desktop `0-static-skill-package.md` D3 and with all audited multica content.
+
+**Candidate model.** A directory/archive source is normalized in pure CPU to a deterministically ordered
+candidate list (recursive `SKILL.md` discovery; each direct parent = one candidate root; ordered by canonical
+path). Nested `SKILL.md` roots are invalid and fail closed. A batch is partial-success
+(DISCOVER → VALIDATE → APPLY EACH → SUMMARY); one candidate's failure does not roll back siblings; each
+candidate produces exactly one `skill_ingestions` row (its durable saga journal). Batch matching key is
+`(workspace_id, canonical_name)`; an explicit update uses `target_skill_id` as authoritative; there is no
+rename inference.
+
+**Idempotency.** The request-level `Idempotency-Key` is distinct from content identity (root D20). The
+per-candidate idempotent identity is `(workspace_id, idempotency_key, canonical_name)` (the **locator**); the
+semantic request fingerprint is a domain-separated, length-prefixed SHA-256 hex over
+`(target_skill_id, display_name, summary, content_digest, package_digest)` (the **equality key**) — never the
+raw upload bytes, never the key, and never `(content_digest, package_digest)` alone (the same package can serve
+different business requests: a different `target_skill_id`, or caller-chosen `display_name`/`summary`, changes
+final state). Transport-only fields (multipart boundary, raw zip/tar byte order, compression metadata, mtime,
+HTTP header order, transport filename) are excluded; a directory source and an archive source with the same
+canonical content and same business semantics converge to the same fingerprint. `same key + same fingerprint →
+resume/replay`; `same key + different fingerprint → conflict`; `different keys + same content → multiple
+ingestions, one revision, one object`.
+
+**Recovery model = CLIENT-DRIVEN CONTINUATION (the Step 2C.0 core).** The Step 2C.0 design separates
+*durable state recovery* (provided: ingestion identity/state/idempotent identity/activation outcome are all in
+the DB) from *durable payload recovery* (NOT provided: the canonical package bytes are not server-recoverable).
+V1 has **no** server-side background recovery worker (Step 2B.0 D18: the `Idempotency-Key` converges same-key
+requests at the HTTP layer) — the saga is synchronous and client-driven, so **Step 2C does not provide
+autonomous package-byte recovery before canonical Object Storage persistence**. Because `skillpkg.Build` is a
+deterministic pure function (Step 2B.0 D5), crash recovery is: the client re-submits the same
+`Idempotency-Key` + same source; the new request **deterministically rebuilds** the exact canonical package
+bytes, matches the durable identity (`object_locator` + `expected_digest` + `request_fingerprint`) in
+`skill_ingestions`, and resumes — probe → `ABSENT` ⇒ PUT (with the freshly rebuilt bytes), `MATCHING` ⇒ adopt
+straight into DB TX #2. There is no recovery root that depends on the original in-flight request, a
+server-spooled temp dir, or an in-process byte slice. This keeps root D19 / Step 2B.0 invariant 19 (TX #1
+before any external mutation) intact: the bytes are *rebuilt*, never persisted server-side, so no staging
+store, no PUT-before-journal, and no source blob are needed.
+
+**Stranded ingestion semantics.** If the client never re-submits, a `planned`/`storing` ingestion strands
+indefinitely; the server will not (and cannot — no payload, no worker) autonomously advance it. Resumption is
+possible only through the **same** `Idempotency-Key` (a new key = a new ingestion); V1 has no automatic
+cleanup (left to the object retention/GC decision), and stranded rows must be observable (list by
+`workspace_id` + `state IN ('planned','storing')`) without inferring external object state.
+
+**Transaction boundary.** Source read / archive parse / `SKILL.md` discovery are I/O that runs outside any
+transaction; `skillpkg.Build` is deterministic content processing (pure CPU). DB TX #1 (short, DB-only)
+authorizes, binds the idempotency key, and inserts `skill_ingestions(state='planned', canonical_name,
+idempotency_key, request_fingerprint, source_type, expected_digest=content_digest, digest_algorithm,
+object_locator=key)` — no package bytes, no Object Storage I/O. The external stage (`PutImmutable` → probe →
+D9 verify) runs entirely outside any transaction/lock. DB TX #2 (short, DB-only, only after
+`CONFIRMED_PRESENT_MATCHING`) creates or reuses the Skill and SkillRevision (reuse via
+`UNIQUE(skill_id,digest_algorithm,content_digest)`), backfills `target_skill_id` for new Skills, finalizes
+`state='committed'`, writes `activation_outcome` (`'activated'` on CAS success, `'activation_conflict'` on a
+version conflict), and CAS-advances `Skill.current_revision_id` on `Skill.version`. A CAS conflict leaves the
+revision valid, the pointer untouched, and the ingestion `committed`, with the activation outcome recorded
+durably for replay.
+
+**Migration requirement.** `0015_skills.sql` must not be modified — and is not. The design added **one new
+forward migration** (`0016_skill_ingestion_idempotency.sql`, applied) with four additive changes:
+`ALTER TABLE skill_ingestions ADD COLUMN canonical_name text` (nullable, with a
+`IS NULL OR length(...) BETWEEN 1 AND 200` CHECK so the Step 1A ingestion test that does not set it still
+passes);
+`ALTER TABLE skill_ingestions ADD COLUMN request_fingerprint text`
+(`IS NULL OR length(...) BETWEEN 1 AND 128` CHECK);
+`ALTER TABLE skill_ingestions ADD COLUMN activation_outcome text`
+(`IS NULL OR activation_outcome IN ('activated','activation_conflict')` CHECK); and
+`CREATE UNIQUE INDEX skill_ingestion_candidate_uniq ON skill_ingestions(workspace_id, idempotency_key,
+canonical_name)`. No `package_digest` / `version` / `size_bytes` / `file_count` columns are added, and no
+`display_name`/`summary` columns (those are encoded in `request_fingerprint`).
+
+**Implementation acceptance gates** (Step 2C implementation is complete only when all hold):
+
+- [x] each candidate has an independent, durable, replayable `skill_ingestions` identity
+      (`workspace_id, idempotency_key, canonical_name` unique);
+- [x] the semantic request fingerprint is `(target_skill_id, display_name, summary, content_digest,
+      package_digest)`; a same-key resubmission with a different fingerprint is a conflict, not a replay;
+- [x] crash recovery deterministically rebuilds the canonical package bytes from a same-key resubmission and
+      verifies them against the durable identity (`object_locator` + `expected_digest` + `request_fingerprint`)
+      — no path re-reads an ephemeral upload or an in-process slice;
+- [x] a crash between TX #1 and PUT resolves by probe: `ABSENT` ⇒ PUT (rebuilt bytes), `MATCHING` ⇒ adopt;
+- [x] a crash after a successful PUT but before TX #2 adopts the existing object, never re-PUTs;
+- [x] no Object Storage / filesystem / HTTP / process work runs inside a DB transaction, row lock, or
+      advisory lock (source read/archive parse/discovery are outside transactions; `skillpkg.Build` is pure CPU);
+- [x] `MISMATCH` fails closed (no revision, `current_revision_id` unchanged, stable error code);
+- [x] activation uses `Skill.version` CAS; a conflict preserves the immutable revision and the untouched
+      pointer, writes `activation_outcome='activation_conflict'` durably, and does not re-attempt the CAS on
+      replay (new business attempt = new `Idempotency-Key`);
+- [x] a `planned`/`storing` ingestion never advances autonomously (no worker) — it strands until the same
+      `Idempotency-Key` re-submits;
+- [x] `0016_skill_ingestion_idempotency.sql` is applied (all four changes); `0015_skills.sql` is byte-identical
+      to Step 1A.
+
+### Step 2C.1 Source intake & candidate discovery — IMPLEMENTED
+
+Status: **implemented** (`internal/skillsource` + `core.Store.IngestSource` seam). The four source-intake
+semantics closed by `specs/decisions/cloud/skills/20260927-source-intake-candidate-discovery.md`
+(status `proposed`, approved for implementation) are realized in code; no migration was written.
+
+- [x] **Archive support set** = ZIP + uncompressed TAR only (`.zip` / `.tar`); `.tar.gz` / `.tgz` / gzip are
+      unsupported (no sniffing, no parser fallback). Archive encoding is caller-supplied `SourceKind ∈
+      {zip, tar}` — never filename/MIME/sniffed.
+- [x] **Files outside candidate roots** are validated for safety first, then ignored for candidate
+      construction: safe-but-unattached → ignored; unsafe-unattached → reject the whole source. A source
+      root with its own `SKILL.md` is the single root candidate (owns the whole tree).
+- [x] **Nested candidate roots** are a source-level structural error (`ErrNestedRoot`): the whole source is
+      rejected before any candidate enters the saga. Nested-ness is judged by canonical root-path components
+      (`a`/`a/b` nested; `a`/`ab` not).
+- [x] **Duplicate `canonical_name` within one source** is a source-level structural conflict
+      (`ErrDuplicateName`): the whole source is rejected before TX #1 — never first/last wins, never DB
+      `UNIQUE` decides.
+- [x] **Failure boundary**: source-level structural failures → zero `SkillIngestion` rows; invalid `SKILL.md`
+      metadata → candidate-local `PreparationFailure{CandidateRoot, ErrorCode, Detail}` (no ingestion row,
+      siblings continue, no synthetic `canonical_name`), carried by `PreparedSourceResult{Candidates[],
+      PreparationFailures[]}`; only a resolved `PreparedCandidate[]` enters the existing `IngestSkills` saga
+      (partial-success unchanged), via `core.Store.IngestSource`.
+- [x] **SourceType**: directory → `"directory"`, zip/tar → `"archive"`; directory / ZIP / TAR of the same
+      logical tree converge on identical candidate paths, bytes, `canonical_name`, manifest, content digest,
+      package bytes, and package digest.
+- [x] **Schema impact**: NONE — `0015_skills.sql` and `0016_skill_ingestion_idempotency.sql` are unchanged; no
+      `0017`.
+- [ ] Public upload HTTP API / production Object Storage provider / frontend / RetrievalCapability / Node
+      delivery / Agent-Execution bindings remain NOT implemented (later phases).
+
+## Phase 4 — Public API / Skills board backend
+
+- Workspace-scoped CRUD/import;
+- revision activation/update semantics;
+- Agent Skill assignment;
+- idempotency/version behavior;
+- generated contracts/OpenAPI/client.
+
+## Phase 5 — Execution snapshot
+
+- resolve enabled Agent Skills at Execution creation;
+- exact revision binding;
+- immutable dispatch descriptor;
+- retry/new Attempt behavior.
+
+## Phase 6 — Retrieval capability
+
+- capability mint/refresh;
+- short-lived exact-object read authorization;
+- secret redaction/non-persistence;
+- Controller/Node transport contract.
+
+## Phase 7 — Node verified cache
+
+- retrieval;
+- staging;
+- digest/size verification;
+- atomic publish;
+- concurrency;
+- bounded GC.
+
+## Phase 8 — Agent runtime projection
+
+- AgentRuntimeAdapter;
+- per-Attempt projection staging;
+- atomic publish;
+- ownership/preservation;
+- READY barrier;
+- spawn gate.
+
+## Phase 9 — Frontend
+
+- Skills board;
+- directory/archive import UX;
+- batch summary;
+- Skill metadata/revision display;
+- Agent assignment UI as scoped for this wave.
+
+## Phase 10 — End-to-end audit
+
+- full gates;
+- core-test evidence;
+- OpenAPI/client drift;
+- both Git repositories status/diff;
+- secret scan/log review;
+- plan acceptance audit.
+
+Implementation may split these phases into multiple commits, but must preserve coherent independently correct states.
+
+---
+
+# 35. STOP conditions
+
+The implementation agent MUST stop and report before proceeding if any of these occur:
+
+- approved ADR contradicts Workspace ownership;
+- current execution model cannot represent immutable SkillRevision inputs without a semantic change beyond this plan;
+- Agent persistence model differs materially from the assumed integration point;
+- signed capability cannot be transported without violating an approved protocol that has not yet been updated;
+- object-store client lacks a safe stable-identity reconciliation mechanism;
+- Runtime/Agent discovery requires modifying canonical Skill package bytes in a non-deterministic way;
+- existing Node lifecycle cannot enforce the READY-before-spawn gate without a larger architecture change;
+- schema naming/ownership conflicts with an already implemented first-class Skills model;
+- any proposed implementation requires external filesystem/HTTP/Object Storage calls inside a DB transaction;
+- any proposed shortcut would weaken auth, idempotency, versioning, fencing, migration checks, or test gates.
+
+---
+
+# 36. Acceptance criteria
+
+## Domain
+
+- [ ] Every Skill belongs to exactly one Collaboration Workspace.
+- [ ] Active canonical Skill names are unique within a Workspace.
+- [ ] Skill metadata is mutable and SkillRevision content is immutable.
+- [ ] Same Skill + same canonical digest reuses one SkillRevision.
+- [ ] Different Skills remain distinct even with identical content.
+- [ ] Skill is soft-deleted and existing execution snapshots remain stable.
+
+## Ingestion
+
+- [ ] Directory and archive inputs use one canonical virtual-tree pipeline.
+- [ ] Recursive Skill discovery works.
+- [ ] Nested Skill roots fail.
+- [ ] Unsafe paths/special nodes/symlinks fail.
+- [ ] Binary supporting files are preserved.
+- [ ] Canonical digest ignores transport/archive metadata.
+- [ ] Batch import is partial-success.
+- [ ] Each candidate has independent durable ingestion evidence.
+- [ ] External object work occurs outside DB transactions.
+- [ ] Ambiguous external outcomes reconcile by stable identity.
+
+## Execution
+
+- [ ] AgentSkillBinding is mutable future-execution configuration.
+- [ ] Execution creation resolves exact immutable SkillRevision rows.
+- [ ] ExecutionSkillBinding is immutable.
+- [ ] dispatch/claim never recomputes Skills from mutable Agent configuration.
+- [ ] retry creates a new Attempt under the same Execution.
+- [ ] retry preserves exact SkillRevision bindings.
+- [ ] Run Again/new Execution resolves current configuration.
+
+## Retrieval/security
+
+- [ ] Node receives an abstract short-lived retrieval capability, not long-lived storage credentials.
+- [ ] Signed capability handling is explicitly approved in specs/ADR.
+- [ ] capability is not persisted or logged.
+- [ ] refresh can only mint access to the same bound revision.
+- [ ] Node verifies size and digest independently.
+- [ ] Controller/Cloud do not proxy normal Skill package bytes.
+
+## Node
+
+- [ ] Verified cache is digest-addressed, immutable, atomic, concurrency-safe, disposable, and bounded.
+- [ ] Agent never mutates shared cache.
+- [ ] projections are Attempt-scoped.
+- [ ] projection uses staging then atomic publish.
+- [ ] partial projection is never Agent-visible.
+- [ ] required Skill failure blocks spawn.
+- [ ] READY barrier precedes Agent spawn.
+- [ ] crash recovery rebuilds/revalidates; no partial filesystem resume.
+- [ ] Agent-specific discovery logic lives in AgentRuntimeAdapter.
+- [ ] materialization never executes Skill package content.
+
+## Compatibility / quality
+
+- [ ] Relevant specs ADRs and core tests are synchronized.
+- [ ] applied migrations were not modified.
+- [ ] fresh DB migration test passes.
+- [ ] upgrade migration test passes.
+- [ ] OpenAPI/frontend client generated artifacts are synchronized where applicable.
+- [ ] narrow tests pass.
+- [ ] `task format` passes.
+- [ ] `task check` passes for behavior/repository-wide changes.
+- [ ] `task test:race` passes for concurrency/recovery/cache/persistence changes.
+- [ ] `task build` passes for applicable command/startup changes.
+- [ ] frontend gates pass for frontend changes.
+- [ ] `git diff --check` passes.
+- [ ] complete diffs reviewed.
+- [ ] root repo and `specs/` repo statuses reviewed.
+- [ ] no secrets/capabilities leaked into logs, fixtures, snapshots, or committed files.
+- [ ] no unrelated user changes overwritten.
+
+---
+
+# 37. Final implementation report format
+
+The implementing Agent must finish with:
+
+```text
+## Plan Audit
+
+### Implemented
+- <plan section> — PASS — <files/tests/evidence>
+
+### Not Applicable
+- <plan section> — N/A — <reason>
+
+### Deviations
+- NONE
+```
+
+If there is any deviation:
+
+```text
+### Deviations
+- <plan section>
+  Planned:
+  Implemented:
+  Reason:
+  Approval/reference:
+```
+
+Unapproved semantic deviations are a failure, not an implementation choice.
+
+Also report migrations added, ADR/spec changes, APIs/contracts changed, tests added/updated, commands/gates run and their results, root `git status --short`, `git -C specs status --short`, and known residual risks/deferred non-goals.

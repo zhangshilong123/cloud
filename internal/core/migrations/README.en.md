@@ -46,6 +46,18 @@ Migrations are executed in ascending numerical sequence. The sequence is **appen
   - `clone_executions`: executions a Controller registers before dispatching (exactly one per request, Controller-chosen opaque identities), their input, terminal result and the lease epoch at registration.
   - `clone_event_receipts`: exact receipts `(execution, sequence, event)` of Node events, the only basis for acknowledging a Node.
   - `control_submissions`: identity, request digest and recorded response of every state-changing submission; the same identity with the same content replays the response instead of reapplying.
+- **`0015_skills.sql`** (append-only, after `0013`): the Cloud Skills workspace-owned domain and persistence foundation, following `specs/decisions/cloud/skills/0-cloud-skills.md`:
+  - `skills`: a mutable business resource owned by exactly one Collaboration Workspace (`collab_workspaces`, not the runtime `workspaces` table); active Skill `(workspace_id, canonical_name)` is enforced by a partial unique index that releases the name on soft delete.
+  - `skill_revisions`: immutable canonical content snapshots of one Skill (deliberately no `version`/`updated_at`/`deleted_at`); `UNIQUE(skill_id, digest_algorithm, content_digest)` keeps one revision per digest within a Skill while equal content across Skills stays independent business revisions.
+  - `skill_ingestions`: journal-first upload/import saga evidence, state `planned→storing→verified→committed/failed`, kept separate from SkillRevision.
+  - `skills.current_revision_id` uses a composite foreign key `(current_revision_id, id) → skill_revisions(id, skill_id)` so the pointer can only name a revision of the same Skill; `skills.workspace_id` is pinned by the `skill_immutable` trigger (cross-Workspace moves are copy/export/import of a new Skill).
+  - Deliberately no AgentSkillBinding / ExecutionSkillBinding / Object Storage tables; the signed RetrievalCapability is a bearer credential and is never persisted.
+- **`0016_skill_ingestion_idempotency.sql`** (append-only, after `0015`; following `specs/decisions/cloud/skills/20260927-canonical-ingestion-saga.md`'s Schema section): four additive changes to `skill_ingestions`, implementing the canonical ingestion saga's (Phase 2) idempotency and recovery:
+  - `canonical_name` (nullable, `IS NULL OR length BETWEEN 1 AND 200`): the candidate's stable identity component (D6/D11), part of the per-candidate idempotency namespace `(workspace_id, idempotency_key, canonical_name)`; nullable here to stay compatible with Step 1A's historical/test rows (a unique index treats NULLs as distinct), the ingestion pipeline always writes a non-empty value, and a later forward migration may tighten it to `NOT NULL`.
+  - `request_fingerprint` (`IS NULL OR length BETWEEN 1 AND 128`): the semantic request fingerprint (D10), a domain-separated, length-prefixed SHA-256 hex over `(target_skill_id, display_name, summary, content_digest, package_digest)` — the durable replay-vs-conflict discriminator (D22).
+  - `activation_outcome` (`IS NULL OR IN ('activated','activation_conflict')`): the durable activation-CAS result (D20); NULL for every non-`committed` state.
+  - A unique index `skill_ingestion_candidate_uniq(workspace_id, idempotency_key, canonical_name)`: the deterministic, concurrency-safe per-candidate idempotency identity the recovery path depends on.
+  - This file does not modify `0015_skills.sql`.
 
 ## Checksum integrity and immutability
 
