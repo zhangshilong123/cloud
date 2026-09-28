@@ -105,6 +105,7 @@ func Routes() []Route {
 		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/skills/imports", "", []string{"source_kind", "source", "target_skill_id", "display_name", "summary"}},
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/skills", "", nil},
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId", "", nil},
+		{"DELETE", "/api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId", "", []string{"version"}},
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/agents", "", nil},
 		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/agents", "", []string{"name"}},
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/agents/:agentId", "", nil},

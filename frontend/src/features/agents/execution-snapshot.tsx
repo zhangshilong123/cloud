@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useExecution } from '@/features/agents/api'
-import { ATTEMPT_STATE_LABELS, formatBytes, shortDigest } from '@/features/agents/present'
+import { ATTEMPT_STATE_LABELS, formatBytes } from '@/features/agents/present'
 
 /**
  * Frozen-snapshot inspector for one admitted Execution. Snapshot authority is
@@ -118,11 +118,8 @@ function FrozenBindings({ bindings }: { bindings: ExecutionSkillBinding[] }) {
                 {formatBytes(binding.sizeBytes)}
               </span>
             </div>
-            <p
-              className="mt-1 select-all break-all font-mono text-xs text-muted-foreground"
-              title={binding.contentDigest}
-            >
-              {shortDigest(binding.contentDigest)}
+            <p className="mt-1 select-all break-all font-mono text-xs text-muted-foreground">
+              {binding.skillRevisionId}
             </p>
           </li>
         ))}

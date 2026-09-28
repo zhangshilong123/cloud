@@ -20,6 +20,7 @@ function cloudSkill(id: string, displayName: string) {
     updatedAt: '2026-09-20T10:00:00+08:00',
     currentRevision: {
       id: `rev-${id}`,
+      description: `${displayName} 的说明。`,
       contentDigest: 'a'.repeat(64),
       packageFormat: 'zip',
       packageFormatVersion: 1,
@@ -46,6 +47,9 @@ describe('SkillsPage', () => {
 
     expect(await screen.findByText('网页搜索')).toBeInTheDocument()
     expect(await screen.findByText('代码评审')).toBeInTheDocument()
+    // Rows preview the package description, not the content digest.
+    expect(screen.getByText('网页搜索 的说明。')).toBeInTheDocument()
+    expect(screen.queryByText('a'.repeat(64))).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /导入技能/ })).toBeInTheDocument()
   })
 

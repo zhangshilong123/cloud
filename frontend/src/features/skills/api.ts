@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Error as ApiError, Skill, SourceUploadResult } from '@/api/generated.schemas'
 import {
+  deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId,
   getApiV1TenantsTidSpacesSpaceIdSkills,
   getApiV1TenantsTidSpacesSpaceIdSkillsSkillId,
   postApiV1TenantsTidSpacesSpaceIdSkillsImports,
 } from '@/api/skills/skills'
 import { useCurrentSpace } from '@/features/spaces/current-space'
-import { useIdempotencyKeys } from '@/features/spaces/api'
+import { mutationHeaders, useIdempotencyKeys } from '@/features/spaces/api'
 import { useCursorList } from '@/features/spaces/cursor-list'
 import type { ErrorType } from '@/lib/api-client'
 
@@ -86,6 +87,36 @@ export function useImportSkill() {
       void queryClient.invalidateQueries({
         queryKey: [`/api/v1/tenants/${tenantId}/spaces/${space.id}/skills`],
       })
+    },
+  })
+}
+
+/**
+ * Soft-deletes (archives) a Skill. The Idempotency-Key keeps a retry replaying the
+ * same delete instead of erroring on a version change; both the detail and the list
+ * query invalidate on success.
+ */
+export function useDeleteSkill() {
+  const queryClient = useQueryClient()
+  const { tenantId, space } = useCurrentSpace()
+  const keyFor = useIdempotencyKeys()
+  return useMutation<Skill, ErrorType<ApiError>, { id: string; version: number }>({
+    mutationFn: (input) => {
+      if (!tenantId || !space) throw new Error('cloud space not resolved')
+      return deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId(
+        tenantId,
+        space.id,
+        input.id,
+        { version: input.version },
+        { headers: mutationHeaders(keyFor(input)) },
+      )
+    },
+    onSuccess: (_data, input) => {
+      if (!tenantId || !space) return
+      void queryClient.invalidateQueries({
+        queryKey: [`${skillsKey(tenantId, space.id)}/${input.id}`],
+      })
+      void queryClient.invalidateQueries({ queryKey: [skillsKey(tenantId, space.id)] })
     },
   })
 }

@@ -232,11 +232,12 @@ func Document() map[string]any {
 	// any object storage field.
 	s["SkillRevision"] = object(obj{
 		"id":                   uuid(),
+		"description":          str(),
 		"contentDigest":        str(),
 		"sizeBytes":            number(),
 		"packageFormat":        str(),
 		"packageFormatVersion": number(),
-	}, "id", "contentDigest", "sizeBytes", "packageFormat", "packageFormatVersion")
+	}, "id", "description", "contentDigest", "sizeBytes", "packageFormat", "packageFormatVersion")
 	s["Skill"] = object(obj{
 		"id":              uuid(),
 		"workspaceId":     uuid(),
@@ -800,7 +801,9 @@ func description(r router.Route) string {
 		}
 	}
 	if strings.Contains(r.Path, "/skills") && !strings.Contains(r.Path, "/agents") {
-		if r.Method == "GET" && isList(r) {
+		if r.Method == "DELETE" {
+			base += "Soft-deletes a Skill; the creator or a workspace owner/admin may delete. The Skill disappears from the live list and future execution admission, but its SkillRevisions, object storage package, and any historical ExecutionSkillBinding snapshot are preserved, so a frozen Execution bound to this Skill's revision stays readable. Requires a matching version and an idempotency key. "
+		} else if r.Method == "GET" && isList(r) {
 			base += "Lists the workspace's live Skills in deterministic (canonical_name, skill id) order with UUID pagination; any active member can read. Only public identity and current-revision fields are returned — never the object storage locator, bucket, storage key, provider, or any signed URL. "
 		} else {
 			base += "Reads one live Skill's public identity and current revision; any active member can read. A soft-deleted or foreign-workspace Skill is 404 (no existence leak); storage credentials and locators are never exposed. "

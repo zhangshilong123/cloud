@@ -8,9 +8,14 @@
 //
 //   - metadata sits in a YAML frontmatter block whose first byte is a "---" line and whose
 //     closing fence is the next line that is exactly "---" (no BOM, no leading content);
-//   - name is required and must be a YAML string scalar; after trimming ASCII whitespace it
-//     must match ASCII [A-Za-z0-9._-]+, not start with ".", and be at most 200 bytes;
-//   - canonical_name is the single transformation ASCII-lowercase(name);
+//   - name is required and must be a YAML string scalar; after trimming Unicode whitespace it
+//     must be non-empty, valid UTF-8, contain no NUL/control characters, not start with ".",
+//     and be at most 200 bytes. The name is bounded Unicode: CJK names such as 律师助手 are
+//     accepted verbatim (no transliteration, no slugify, no ASCII fallback);
+//   - canonical_name is the single transformation NFC-normalize + Unicode case-fold(name) — a
+//     case-insensitive Unicode comparison key that separates the human-readable name from the
+//     canonical identity. ASCII input still folds to lowercase (Lawyer-Assistant →
+//     lawyer-assistant), so existing ASCII rows are unchanged;
 //   - description is optional; when present it must be a YAML string scalar of at most 4096
 //     bytes (after trimming), and is returned trimmed ("" when absent or whitespace-only);
 //   - duplicate keys and invalid YAML fail closed; unknown fields and the Markdown body are
@@ -24,6 +29,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,14 +42,15 @@ import (
 // metadata contract, which left the exact strings to the implementation slice and gave these
 // names as the example codes.
 const (
-	CodeNoFrontmatter      = "skill_md_no_frontmatter"
-	CodeInvalidYAML        = "skill_md_invalid_yaml"
-	CodeMissingName        = "skill_md_missing_name"
-	CodeNameNotString      = "skill_md_name_not_string"
-	CodeNameInvalidChars   = "skill_md_name_invalid_chars"
-	CodeNameTooLong        = "skill_md_name_too_long"
-	CodeDescriptionInvalid = "skill_md_description_invalid"
-	CodeDuplicateKey       = "skill_md_duplicate_key"
+	CodeNoFrontmatter           = "skill_md_no_frontmatter"
+	CodeInvalidYAML             = "skill_md_invalid_yaml"
+	CodeMissingName             = "skill_md_missing_name"
+	CodeNameNotString           = "skill_md_name_not_string"
+	CodeNameInvalidChars        = "skill_md_name_invalid_chars"
+	CodeNameInvalidControlChars = "skill_md_name_invalid_control_chars"
+	CodeNameTooLong             = "skill_md_name_too_long"
+	CodeDescriptionInvalid      = "skill_md_description_invalid"
+	CodeDuplicateKey            = "skill_md_duplicate_key"
 )
 
 // Metadata is the extracted SKILL.md identity. Name is the required, trimmed, validated
@@ -52,18 +62,21 @@ type Metadata struct {
 	Description string
 }
 
-// CanonicalName returns the single deterministic transformation of Name: ASCII lowercase.
-// Parse guarantees Name is already trimmed and ASCII-only, so this is a total function;
-// folding ASCII (not Unicode) keeps it faithful to the contract even for a hand-constructed
-// Metadata value.
+// CanonicalName returns the single deterministic transformation of Name — a case-insensitive
+// Unicode comparison key: NFC-normalize then Unicode case-fold. Parse guarantees Name is
+// already trimmed and valid (bounded Unicode), so this is a total function even for a
+// hand-constructed Metadata value. ASCII input still folds to lowercase, so existing ASCII
+// canonicals are unchanged; CJK text is invariant (no transliteration, no slugify, no pinyin).
 func (m Metadata) CanonicalName() string {
-	b := []byte(m.Name)
-	for i, c := range b {
-		if c >= 'A' && c <= 'Z' {
-			b[i] = c + ('a' - 'A')
-		}
-	}
-	return string(b)
+	return canonicalKey(m.Name)
+}
+
+// canonicalKey computes the canonical comparison key for a validated name. Order matters:
+// NFC first (so canonically-equivalent inputs collapse), then full case-fold (whose output is
+// not guaranteed composed), then NFC again for a single canonical form the DB uniqueness index
+// sees byte-for-byte identically.
+func canonicalKey(name string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
 }
 
 // ParseError is a deterministic metadata parse failure. Code is a stable machine-readable
@@ -132,12 +145,15 @@ func Parse(skillMD []byte) (Metadata, error) {
 	if !isStringScalar(name) {
 		return Metadata{}, parseError(CodeNameNotString, "frontmatter \"name\" must be a YAML string")
 	}
-	trimmed := trimASCII(name.Value)
-	if !validNameBytes(trimmed) {
-		return Metadata{}, parseError(CodeNameInvalidChars, fmt.Sprintf("frontmatter \"name\" %q is not ASCII [A-Za-z0-9._-]+ or starts with \".\"", trimmed))
+	trimmed := strings.TrimSpace(name.Value)
+	if err := validateName(trimmed); err != nil {
+		return Metadata{}, err
 	}
-	if len(trimmed) > 200 {
-		return Metadata{}, parseError(CodeNameTooLong, fmt.Sprintf("frontmatter \"name\" is %d bytes (max 200)", len(trimmed)))
+	// The canonical key must fit the DB's CHECK(length BETWEEN 1 AND 200) (PostgreSQL length()
+	// counts characters, not bytes); NFC/case-fold never shrinks, but folding can grow the rune
+	// count (e.g. İ → i̇), so guard the derived key too.
+	if utf8.RuneCountInString(canonicalKey(trimmed)) > 200 {
+		return Metadata{}, parseError(CodeNameTooLong, fmt.Sprintf("frontmatter \"name\" canonicalizes longer than 200 characters (max 200)"))
 	}
 
 	meta := Metadata{Name: trimmed}
@@ -162,36 +178,37 @@ func isStringScalar(n *yaml.Node) bool {
 	return n.Kind == yaml.ScalarNode && n.Tag == "!!str"
 }
 
-// validNameBytes reports whether s is a non-empty ASCII [A-Za-z0-9._-]+ value that does not
-// start with ".". The charset is checked byte-wise (the name is ASCII-only by contract).
-func validNameBytes(s string) bool {
-	if s == "" || s[0] == '.' {
-		return false
+// validateName enforces the bounded-Unicode name rules on the already Unicode-trimmed value:
+// non-empty, valid UTF-8, no NUL/control characters, no leading ".", and at most 200 bytes.
+// Every failure is a distinct ParseError code (they are never collapsed into one invalid_name).
+func validateName(s string) error {
+	if s == "" {
+		return parseError(CodeMissingName, "frontmatter \"name\" is empty after trimming whitespace")
 	}
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c >= 'a' && c <= 'z':
-		case c >= 'A' && c <= 'Z':
-		case c >= '0' && c <= '9':
-		case c == '.' || c == '_' || c == '-':
-		default:
-			return false
-		}
+	if s[0] == '.' {
+		return parseError(CodeNameInvalidChars, `frontmatter "name" must not start with "."`)
 	}
-	return true
+	if !utf8.ValidString(s) {
+		return parseError(CodeNameInvalidChars, `frontmatter "name" is not valid UTF-8`)
+	}
+	if hasControlChar(s) {
+		return parseError(CodeNameInvalidControlChars, `frontmatter "name" contains control characters`)
+	}
+	if len(s) > 200 {
+		return parseError(CodeNameTooLong, fmt.Sprintf("frontmatter \"name\" is %d bytes (max 200)", len(s)))
+	}
+	return nil
 }
 
-// trimASCII trims only ASCII whitespace (0x09-0x0D and 0x20). The contract specifies ASCII
-// whitespace for name because name's charset is ASCII-only; a Unicode space must survive the
-// trim and fail the charset check rather than be silently dropped.
-func trimASCII(s string) string {
-	return strings.TrimFunc(s, func(r rune) bool {
-		switch r {
-		case ' ', '\t', '\n', '\v', '\f', '\r':
+// hasControlChar reports whether s contains a NUL, C0 (0x00–0x1F), DEL (0x7F), or C1
+// (0x80–0x9F) control character. Valid CJK, punctuation, and whitespace runes pass.
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
 			return true
 		}
-		return false
-	})
+	}
+	return false
 }
 
 // frontmatterRoot returns the root node of a parsed document, or nil for an empty document.

@@ -79,6 +79,8 @@ func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, erro
 			out = putAgentSkill(t, r, uid)
 		case r.SpaceID != "" && r.AgentID != "" && r.SkillID != "" && r.Method == "DELETE":
 			out = detachAgentSkill(t, r, uid)
+		case r.SpaceID != "" && r.SkillID != "" && r.AgentID == "" && r.Method == "DELETE":
+			out = archiveSkill(t, r, uid)
 		case r.SpaceID != "" && r.AgentID != "" && strings.HasSuffix(r.Path, "/skills") && r.Method == "POST":
 			out = attachAgentSkill(t, r, uid)
 		case r.SpaceID != "" && r.AgentID != "" && r.Method == "PATCH":

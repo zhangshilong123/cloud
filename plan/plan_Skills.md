@@ -1951,6 +1951,81 @@ and the frozen-snapshot inspector (`GET /executions/{executionId}` with real `el
 Non-goals: Node delivery, READY, runtime materialization, fake execution, and any RetrievalCapability credential display
 (the browser never receives a signed URL).
 
+### Skills UX Polish — folder import / description / digest cleanup — DONE
+
+Status: **done — folder import stays transport-only, description is an additive read-model change, and
+the content digest moves behind the UI.** Three demo-loop UX gaps were addressed:
+(`format:check` / `lint` / `typecheck` / `build` all pass; the `folderToZip` output was verified with a
+real unzip round-trip — the vitest suite needs Node ≥24 and this box runs 20.18.)
+
+1. **Folder import** — the import dialog gains a 「选择文件夹」 mode beside archive upload. It uses the
+   browser `webkitdirectory` picker, strips the selected directory's own name so archive paths equal
+   `PrepareDirectory`-relative paths (the convergence invariant), packages the tree into one ZIP in the
+   browser, and submits it through the existing `POST /skills/imports` (`source_kind=zip`). The browser is
+   transport-only: `SKILL.md` candidate discovery, `canonical_name`, tree digest, nested-root rejection and
+   duplicate-name detection all remain `internal/skillsource` authority. One folder = one source = one
+   Idempotency-Key; multiple Skill roots in one folder stay a single multipart submission.
+2. **Description** — `currentRevision.description` is exposed with the smallest additive public read change:
+   `skillReadSelect` selects the already-persisted `skill_revisions.package_description` (the SKILL.md
+   `description`), `projectSkill` projects it, `SkillRevision` gains a `description` field, and the
+   OpenAPI/orval artifacts regenerate. No migration: the column exists since `0015`. The Skill detail page
+   shows it above the workspace `summary`; `summary` (mutable workspace/product metadata) and
+   `revision.description` (immutable package metadata) stay separate.
+3. **Digest cleanup** — `content_digest` is removed from ordinary UI (Skills list row, Skill detail
+   "当前版本", Execution frozen snapshot). It remains machine metadata in the API/domain: no digest
+   calculation, dedup, `ExecutionSkillBinding` persistence, or Node cache identity changes.
+
+Non-goals: a new backend directory-upload protocol, client-side candidate discovery authority, canonical
+package/digest changes, Runtime/Node delivery, READY, and RetrievalCapability changes.
+
+### Skills Folder Import Bugfix + Delete — DONE
+
+Status: **done — the folder picker no longer misreads a populated directory as empty, and Skills gain a
+soft-delete.** (`format:check` / `lint` / `typecheck` / `build` / `check:docs` pass; backend `go build ./...`
+and the new + existing skill/execution integration tests pass against real PostgreSQL; the vitest suite
+remains blocked by the pre-existing Node ≥24 requirement on this box's Node 20.18.)
+
+1. **Folder-import bug** — the Chromium `HTMLInputElement.files` `FileList` is *live*, so the handler's old
+   `const list = e.target.files; e.target.value=''; list.length===0` read the list only *after* clearing the
+   input, which empties it and reports 「所选文件夹为空」 for a full parent folder. The handler now snapshots
+   `Array.from(e.target.files ?? [])` *before* `e.target.value=''`, and `folderToZip` treats only a genuinely
+   empty `FileList` as empty — it no longer filters files by `entryPathFor` length. One folder stays one ZIP and
+   one `POST /skills/imports`.
+2. **Skill Delete** — `DELETE /api/v1/tenants/{tid}/spaces/{spaceId}/skills/{skillId}` soft-deletes a Skill under
+   the unified workspace delete rule (`archiveAgent` template): the creator may always delete, otherwise an
+   owner/admin may; member-otherwise → `403 space_role_required`, non-member/foreign-workspace/absent →
+   `404 not_found`. It only sets `deleted_at` (optimistic `version`; missing `428 version_required`, stale `409
+   version_conflict`). It never hard-deletes the `SkillRevision`, its object storage package, or any
+   `ExecutionSkillBinding` snapshot, so a frozen Execution stays readable at its exact revision and a later
+   admission excludes the deleted Skill. The detail page adds a 「删除技能」 confirmation dialog; the Skill API
+   exposes no `createdBy`, so the button is shown to members and the backend remains the authority.
+
+Non-goals: Phase 6A/6B, Controller/Node, hard delete, object-storage GC, `package_digest`/cache-identity, READY,
+runtime materialization, and RetrievalCapability changes.
+
+### Skills Compatibility & Delete Repair — IN PROGRESS
+
+Status: **IN PROGRESS** — repairing three real-user blocking issues before any Phase 6 runtime work.
+Follows the strict protocol READ → REPRODUCE → TRACE AUTHORITY → UPDATE plan → IMPLEMENT → TEST → DOCS →
+FINAL AUDIT → STOP; no git commit/push/merge/rebase/cherry-pick; all changes stay uncommitted.
+
+1. **Unicode Skill name** — `internal/skillmeta` rejects a Chinese `name` (`律师助手`) with
+   `skill_md_name_invalid_chars` because the validator is ASCII-only. REPRODUCED over real HTTP. The fix
+   accepts bounded Unicode (rejecting only empty/whitespace-only/NUL/control/leading-dot/over-length),
+   keeps the human-readable name separate from the canonical comparison key
+   (`canonical_name = NFC-normalize(case-fold(name))`, no transliteration), and preserves ASCII backward
+   compatibility (`Lawyer-Assistant` → `lawyer-assistant`).
+2. **Delete not_found** — the live dev `server.exe` predates the (already implemented, uncommitted) DELETE
+   skill route, so a DELETE hits `NoRoute` → `404 not_found`. The working tree has the route +
+   `archiveSkill` soft-delete and the upload→delete round-trip passes over real HTTP; the live repair is
+   a rebuild + restart. Frontend parameter ordering, space identity (slug → id), version body, and
+   Idempotency-Key are verified correct.
+3. **Description 暂无描述** — the live `server.exe` predates the (already implemented, uncommitted) read
+   projection (`sr.package_description` in `skillReadSelect` + `"description"` in `projectSkill`), so its
+   GET returns `currentRevision` without `description`. The working tree's chain
+   (SKILL.md → skillmeta → `SkillRevision.package_description` → public GET) round-trips and is now
+   regression-pinned; the live repair is a rebuild + restart.
+
 ## Phase 10 — End-to-end audit
 
 - full gates;

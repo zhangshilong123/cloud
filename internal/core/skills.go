@@ -500,7 +500,8 @@ func candidateErrorCode(err error) string {
 // exposes only public fields — never object_locator/bucket/storage key/provider or any signed URL.
 const skillReadSelect = `SELECT s.id, s.workspace_id, s.canonical_name, s.display_name, s.summary,
 	s.version, s.created_at, s.updated_at,
-	sr.id AS current_revision_id, sr.content_digest, sr.size_bytes, sr.package_format, sr.package_format_version
+	sr.id AS current_revision_id, sr.content_digest, sr.size_bytes, sr.package_format, sr.package_format_version,
+	sr.package_description
 	FROM skills s
 	LEFT JOIN skill_revisions sr ON sr.id = s.current_revision_id AND sr.skill_id = s.id`
 
@@ -521,6 +522,7 @@ func projectSkill(o Object) Object {
 	if revID := o.S("currentRevisionId"); revID != "" {
 		out["currentRevision"] = Object{
 			"id":                   revID,
+			"description":          o.S("packageDescription"),
 			"contentDigest":        o.S("contentDigest"),
 			"sizeBytes":            o.N("sizeBytes"),
 			"packageFormat":        o.S("packageFormat"),
@@ -553,6 +555,24 @@ func getSkill(t *transaction, r *PublicRequest, uid string) Object {
 	o := t.one(skillReadSelect+` WHERE s.id=$1 AND s.workspace_id=$2 AND s.deleted_at IS NULL`, r.SkillID, r.SpaceID)
 	require(o != nil, 404, "not_found")
 	return projectSkill(o)
+}
+
+// archiveSkill soft-deletes a Skill under the unified workspace delete rule (D11): the creator may
+// always delete their own Skill; otherwise the actor must be a workspace owner/admin. It only sets
+// deleted_at — never hard-deletes the SkillRevision, its object storage package, or any historical
+// ExecutionSkillBinding/SkillRevision snapshot — so a frozen Execution bound to this Skill's
+// revision stays readable while the Skill disappears from the live list and future admission (D11).
+func archiveSkill(t *transaction, r *PublicRequest, uid string) Object {
+	require(validID(r.SkillID), 404, "not_found")
+	skill := t.one("SELECT * FROM skills WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL", r.SkillID, r.SpaceID)
+	require(skill != nil, 404, "not_found")
+	agentSpace(t, r.SpaceID, uid, false)
+	require(workspaceCanDelete(t, r.SpaceID, uid, skill.S("createdBy")), 403, "space_role_required")
+	version(skill, r.Body.N("version"))
+	t.exec("UPDATE skills SET deleted_at=now(), version=version+1, updated_at=now() WHERE id=$1", r.SkillID)
+	// Re-project through the public read shape so the delete response still exposes the frozen
+	// currentRevision — the soft-delete never clears the current_revision_id pointer (D11).
+	return projectSkill(t.one(skillReadSelect+` WHERE s.id=$1`, r.SkillID))
 }
 
 // pageSkillList pages the Skill list in ascending (canonical_name, id) order. canonical_name is not

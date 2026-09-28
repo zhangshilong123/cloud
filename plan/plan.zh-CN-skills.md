@@ -2153,6 +2153,68 @@ live Skill list）、Execution admission（`POST /executions`，body 仅 `agentI
 非目标：Node delivery、READY、runtime materialization、fake execution，以及任何 RetrievalCapability 凭据展示
 （浏览器永不收到 signed URL）。
 
+### Skills UX Polish —— 文件夹导入 / description / digest 清理 —— DONE
+
+状态：**已完成 —— 文件夹导入仅做客户端打包，description 为只读模型 additive 变更，content digest 从普通界面隐去。**
+（`format:check` / `lint` / `typecheck` / `build` 全部通过；`folderToZip` 产物用真实 unzip round-trip 校验过 ——
+vitest 套件需 Node ≥24，本机为 20.18。）本切片处理 demo 闭环暴露的三个 UX 问题：
+
+1. **文件夹导入** —— 导入对话框在归档上传之外新增「选择文件夹」。用浏览器 `webkitdirectory` 选择器、剥离所选目录
+   自身名（使归档路径等于 `PrepareDirectory` 相对路径，保持 convergence 不变量）、在浏览器内打包为一棵 ZIP，再经
+   既有 `POST /skills/imports`（`source_kind=zip`）提交。浏览器仅 transport：`SKILL.md` candidate discovery、
+   `canonical_name`、tree digest、nested-root 拒绝、duplicate-name 检测全部仍是 `internal/skillsource` 权威。一个
+   文件夹 = 一个 source = 一个 Idempotency-Key；同一文件夹内多个 Skill root 仍是一次 multipart 提交。
+2. **Description** —— 以最小 additive 只读改动暴露 `currentRevision.description`：`skillReadSelect` 选中已持久化的
+   `skill_revisions.package_description`（即 SKILL.md `description`）、`projectSkill` 投影、`SkillRevision` 增补
+   `description` 字段、重生成 OpenAPI/orval。无 migration（该列自 `0015` 即存在）。Skill 详情页优先展示它、置于
+   workspace `summary` 之上；`summary`（可变 workspace/product 元数据）与 `revision.description`（不可变 package 元
+   数据）保持分离。
+3. **Digest 清理** —— 从普通 UI（Skills 列表行、Skill 详情「当前版本」、Execution 冻结快照）移除 `content_digest`。
+   它仍保留为 API/domain 的机器元数据：digest 计算、去重、`ExecutionSkillBinding` 持久化、Node cache identity 均不变。
+
+非目标：新后端 directory 上传协议、客户端 candidate discovery 权威、canonical package/digest 变更、Runtime/Node 交付、
+READY、RetrievalCapability 变更。
+
+### Skills 文件夹导入修复 + 删除 —— DONE
+
+状态：**已完成 —— 文件夹选择器不再把有内容的目录误判为空，Skill 新增软删除。**
+（`format:check` / `lint` / `typecheck` / `build` / `check:docs` 全部通过；后端 `go build ./...` 及新增 + 既有
+skill/execution 集成测试在真实 PostgreSQL 上通过；vitest 套件仍受本机 Node 20.18 低于 engine Node ≥24 的既有限制阻塞。）
+
+1. **文件夹导入 bug** —— Chromium 的 `HTMLInputElement.files` 是 *live* `FileList`，旧代码先 `const list = e.target.files`
+   再 `e.target.value=''` 后才读 `list.length`，导致清空 input 时把已捕获引用一并清掉、把满目录误报「所选文件夹为空」。
+   现将 `Array.from(e.target.files ?? [])` 在 `e.target.value=''` 之前 snapshot，`folderToZip` 也只在真正空 `FileList`
+   时判定为空、不再按 `entryPathFor` 长度过滤文件。一个文件夹仍是一个 ZIP、一次 `POST /skills/imports`。
+2. **Skill 删除** —— `DELETE /api/v1/tenants/{tid}/spaces/{spaceId}/skills/{skillId}` 按统一 workspace 删除规则（仿
+   `archiveAgent`）软删除：creator 恒可删、否则 owner/admin 可删；普通 member 删他人 Skill → `403 space_role_required`、
+   non-member/跨 workspace/不存在 → `404 not_found`。只置位 `deleted_at`（乐观 `version`；缺版本 `428
+   version_required`、旧版本 `409 version_conflict`）。绝不硬删 `SkillRevision`、对象存储包或任何
+   `ExecutionSkillBinding` 快照，故冻结的 Execution 仍可按其精确 revision 读取、后续 admission 排除该 Skill。详情页新增
+   「删除技能」确认对话框；Skill API 不暴露 `createdBy`，故按钮对 member 展示、由后端作为权威判定。
+
+非目标：Phase 6A/6B、Controller/Node、硬删除、对象存储 GC、`package_digest`/cache-identity、READY、runtime
+materialization、RetrievalCapability 变更。
+
+### Skills 兼容性与删除修复 —— IN PROGRESS
+
+状态：**IN PROGRESS** —— 在任何 Phase 6 runtime 工作之前修复三个真实用户阻塞问题。严格遵守协议 READ →
+REPRODUCE → TRACE AUTHORITY → UPDATE plan → IMPLEMENT → TEST → DOCS → FINAL AUDIT → STOP；禁止
+git commit/push/merge/rebase/cherry-pick；所有改动保持未提交。
+
+1. **Unicode Skill name** —— `internal/skillmeta` 因仅接受 ASCII 字符集而拒绝中文 `name`（`律师助手`）并报
+   `skill_md_name_invalid_chars`。已通过真实 HTTP 复现。修复接受有界 Unicode（仅拒绝空/纯空白/NUL/控制字符/
+   以 `.` 开头/超长），将人类可读 name 与规范比较键分离
+   （`canonical_name = NFC 规范化 + 大小写折叠(name)`，禁止转写），并保持 ASCII 向后兼容
+   （`Lawyer-Assistant` → `lawyer-assistant`）。
+2. **删除 not_found** —— 运行中的 dev `server.exe` 早于（已实现但未提交的）DELETE skill 路由，DELETE 落到
+   `NoRoute` → `404 not_found`。工作树已含该路由与 `archiveSkill` 软删除，upload→delete 往返在真实 HTTP 上
+   通过；线上修复为重新构建并重启。前端参数顺序、space 身份（slug → id）、version body、Idempotency-Key
+   均已核实正确。
+3. **description 暂无描述** —— 运行中的 `server.exe` 早于（已实现但未提交的）读投影
+   （`skillReadSelect` 中的 `sr.package_description` + `projectSkill` 中的 `"description"`），其 GET 返回的
+   `currentRevision` 缺少 `description`。工作树链路（SKILL.md → skillmeta → `SkillRevision.package_description`
+   → public GET）可往返且现已被回归测试钉住；线上修复为重新构建并重启。
+
 ## Phase 10 — End-to-end audit
 
 - full gates；

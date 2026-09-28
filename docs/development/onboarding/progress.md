@@ -431,6 +431,49 @@ relay、Agent 看板 UI。
 | **AgentSkillBinding / ExecutionSkillBinding** | ✅ **AgentSkillBinding（Step 4B）+ ExecutionSkillBinding（Phase 5）均已实现** | `agents`/`agent_skill_bindings` 权威模型由 `specs/decisions/cloud/agent/0-agent-skill-binding.md` 闭合并落地为 migration `0017` + `internal/core/agents.go`（CRUD + binding lifecycle + `enabledAgentSkillBindings` 读缝）；`executions`/`attempts`/`execution_skill_bindings` 由 `specs/decisions/cloud/skills/20260927-execution-skill-snapshot.md` 闭合并落地为 migration `0018` + `internal/core/executions.go`（admission 原子冻结 + 不可变 trigger + retry/run-again） |
 | **执行快照 / RetrievalCapability / Controller 交付 / Node 缓存投影 / AgentRuntimeAdapter / READY-before-spawn** | 🚧 **执行快照（Phase 5）+ RetrievalCapability Cloud 侧 mint/refresh（Step 5B）已实现**；Controller 交付 / Node 缓存投影 / READY-before-spawn 仍 NOT IMPLEMENTED | 执行快照 ADR `20260927-execution-skill-snapshot.md` 已落地为 migration `0018` + `internal/core/executions.go`（admission 原子冻结 exact revision + 不可变 ExecutionSkillBinding + retry/run-again）；RetrievalCapability Cloud 侧 mint/refresh 已落地（`0-skill-retrieval-capability.md` `implemented` + `internal/core/retrieval.go` + `s3store` issuer + `MintSkillRetrieval` gRPC）；Node data plane 下载/cache、Controller dispatch/claim/lease relay 与 READY barrier 实现 NOT started；signed RetrievalCapability 属 bearer credential，永不持久化/记录 |
 
+**Skills UX Polish（前端切片）— ✅ DONE**：在 Phase 9 Demo UI slice 已闭环的基础上，处理三个 UX 问题。
+（1）文件夹导入：导入对话框新增「选择文件夹」——浏览器 `webkitdirectory` 选目录 → 剥离所选目录名（与 `PrepareDirectory`
+相对路径保持 convergence 一致）→ 浏览器内打包为单个 ZIP → 走既有 `POST /skills/imports`（`source_kind=zip`）；浏览器仅
+transport，`SKILL.md` 候选发现 / `canonical_name` / tree digest / nested-root 拒绝仍是 `internal/skillsource` 权威，
+一个文件夹仍是一次 source、一个 Idempotency-Key。（2）description：`currentRevision.description` 以最小 additive
+只读改动暴露（`skillReadSelect` 选中既有的 `skill_revisions.package_description`、`SkillRevision` 增补 `description`、
+重生成 OpenAPI/orval），**无 migration**；Skill 详情优先展示它与 workspace `summary` 区分。（3）digest 清理：从
+Skills 列表 / Skill 详情 / Execution 冻结快照移除 `content_digest` 展示，它仍是 API/domain 机器元数据（digest 计算、
+去重、`ExecutionSkillBinding` 持久化、Node cache identity 均不变）。非目标：新后端 directory 协议、客户端 discovery
+权威、canonical/digest 变更、Node runtime。
+
+**Skills Folder Import Bugfix + Skill Delete — ✅ DONE**：两处修复。
+（1）文件夹导入 bug：Chromium/Windows 下选中含多个已解压 Skill 的父文件夹（每个子目录各有 `SKILL.md`）误报
+「所选文件夹为空」。根因：`HTMLInputElement.files` 是活 `FileList`，旧代码在 `e.target.value=''` 之后才读 `length`，此时
+已被浏览器清空；修复为**先**快照 `Array.from(e.target.files)` **再**清空 `value`。同时把「空」判定收敛为唯一权威 ——
+仅 `FileList.length === 0` 报 `empty`，**不再**用「过滤后无 SKILL.md」等客户端发现来判空（客户端只 transport，`SKILL.md`
+候选发现仍是 `internal/skillsource` 权威）；一个文件夹仍是一个 ZIP、一次 `POST /skills/imports`、一个 Idempotency-Key。
+（2）Skill 软删除：新增 `DELETE /api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId`（body `version`，Idempotency-Key 幂等）。
+语义：**仅**置 `deleted_at`（软删，释放 partial unique `skill_active_name_uniq` 名），**不**硬删、**不**删对象存储包、**不** eager-GC
+`SkillRevision`，冻结的 Execution（如 E1→R1）删除后依旧可读，未来准入排除已删 Skill；授权复用 `workspaceCanDelete`（creator 恒可删，
+否则 owner/admin，403 `space_role_required`；非成员/跨工作区 404 no-leak）+ `version()`（428/409）。前端详情页新增「删除技能」对话框
+（AlertDialog，确认后走 `useDeleteSkill`，成功跳列表、409 冲突在 dialog 内展示 `删除失败：version_conflict`）。非目标：硬删、对象存储 GC、
+eager revision GC、RetrievalCapability、Controller/Node 交付。测试：`integration/skill_delete_test.go` 4 用例（授权/角色+作用域/版本纪律/保留历史）
+全通过。
+
+**Skills Compatibility & Delete Repair — ✅ DONE**：在进入任何 Phase 6 运行时前修复三个真实用户阻塞问题。
+（1）**Unicode Skill name**：`internal/skillmeta` 原仅接受 ASCII `[A-Za-z0-9._-]+`，中文 `name`（`律师助手`）导入报
+`skill_md_name_invalid_chars`。现改为**有界 Unicode**——Unicode trim 后非空、合法 UTF-8、无 NUL/控制字符、不以 `.` 开头、≤ 200
+bytes；`canonical_name` 改为 **NFC + Unicode case-fold(name)**（`golang.org/x/text/cases` + `norm`）这一大小写不敏感的比较键，禁止转写
+（no slugify / no pinyin / no ASCII slug），ASCII 输入下与旧的 `ASCII lowercase` 逐字一致（`Lawyer-Assistant` → `lawyer-assistant`），
+故既有 ASCII 落库行不变；**无 schema 迁移**（`canonical_name`/`display_name` 的 `text` + `CHECK(length BETWEEN 1 AND 200)` 均按字符，
+D3 已保证 canonical ≤ 200 字符，折叠极端由 `skill_md_name_too_long` 兜底）。错误码拆分：新增 `skill_md_name_invalid_control_chars`，
+空/纯空白归 `skill_md_missing_name`，`skill_md_name_invalid_chars` 仅结构性非法（非 UTF-8 / 以 `.` 开头）。（2）**删除 not_found**：
+运行中的 dev `server.exe` 早于（已实现但未提交的）DELETE skill 路由，DELETE 落到 gin `NoRoute` → `404 not_found`。工作树已含该路由 +
+`archiveSkill` 软删除（沿 `workspaceCanDelete` 授权、`version()` 427→409→200、仅置 `deleted_at`），upload→delete 真 HTTP 往返已用新增
+回归测试钉住；线上修复 = 重新构建并重启 server。（3）**description 暂无描述**：运行中的 `server.exe` 早于（已实现但未提交的）读投影
+（`skillReadSelect` 增选 `sr.package_description` + `projectSkill` 暴露 `"description"`），其 GET 返回的 `currentRevision` 无
+`description` 字段，前端 `|| '暂无描述。'` 兜底显示。工作树链路（SKILL.md frontmatter → skillmeta → `SkillRevision.package_description`
+→ public GET `currentRevision.description`）已用新增回归测试钉住；线上修复 = 重新构建并重启 server。修复内容经 `go build ./...`、
+`go vet`、全量 `internal` 单测、全量 `integration`（含新增 `integration/skill_compat_test.go` 三用例：中文名导入 / description 往返 /
+删除往返）在真实 PostgreSQL 通过。ADR `20260927-skill-md-metadata-contract.md` 已修订（§38）声明有界 Unicode 与比较键语义；
+非目标：Phase 6A/6B、Controller/Node、运行时。所有改动保持未提交。
+
 ## Issue 看板（迁移自 Multica）
 
 ### 第一波 — 核心看板 ✅
@@ -660,6 +703,7 @@ vite 代理 `/auth,/api,/healthz` → :8081）。与 `cmd/demo-issue-board-web`�
 | 最近 | **Cloud Skills RetrievalCapability 实现（Phase 6 / Step 5B，Cloud 侧 mint/refresh）**（`specs/decisions/controller/skill-delivery/0-skill-retrieval-capability.md`（`proposed`→`implemented`）的 Cloud 侧读取契约落地：`internal/skillstore/retrieval.go`（`RetrievalCapabilityIssuer` port + 脱敏 `RetrievalCapability.String()`，与 durable `ObjectStore` 分离、port 不变不加 Presign）+ `internal/skillstore/s3store/issuer.go`（`PresignGetObject` exact-object GET、TTL 钳制、无存在性探测）+ `internal/core/retrieval.go`（`MintSkillRetrievalCapabilities` transact 解析 `(execution, attempt, skill_revision)` 权威，terminal fencing、fail closed）+ `internal/controlgrpc/retrieval.go`（`MintSkillRetrieval`，请求不含 locator/bucket/key/URL）+ `fault.go` 六类 D32 映射 + `internal/config/storage.go` `retrieval_capability_ttl`（默认 300s / 上限 900s）+ `cmd/server` 装配；无持久化、无 schema 变更、不记录 credential；`internal/skillstore/retrieval_test.go`（脱敏）+ `s3store/issuer_test.go`（exact-object GET / 签发错误 / 非正 TTL / 真实 SDK signed URL）+ `integration/retrieval_capability_test.go` 9 用例（happy / 未绑定 revision / 外源三元组 / terminal fencing / storage_not_configured / signing_failed / invalid_locator / 无持久化 / refresh 保持 revision）全通过；`go build` / `go vet` / `gofmt` / `git diff --check` 全通过（`cmd/devsetup` Windows 文件权限既有失败与本次无关）；**未做**：Node 下载/缓存投影/READY barrier、Controller dispatch/claim/lease relay、Agent 看板 UI） |
 | 最近 | **Cloud Skills Demo Public Contract 补齐（Step UI-API）**（`plan/plan_Skills.md` Step UI-API 切片：四个 public endpoint 闭合前端 demo 回路 —— `GET /skills`（list，`canonical_name`+`skill_id` 确定性排序、limit/after 游标分页）、`GET /skills/:skillId`（detail + `currentRevision{id,contentDigest,sizeBytes,packageFormat,packageFormatVersion}`）、`POST /executions`（body 仅 `agentId`，委托 Phase 5 `AdmitExecution`）、`GET /executions/:executionId`（frozen snapshot = execution + attempts + immutable skillBindings）；复用通用 `Public()` Idempotency-Key replay 与 member+/404 no-leak 授权，**无** migration、**无** UI、**无** RetrievalCapability/signed-URL/object-locator 泄漏；`internal/core/skills.go`/`executions.go` 读缝 + `router.Routes()` 白名单 + `internal/contract/openapi.go` schema + `api/openapi.json` 重生成 + orval 重生成 `skills`/`executions` tag；`integration/skill_execution_public_test.go` 4 用例（list/detail、admission、snapshot 不可变 E1→R1 后 R2 仍 R1、无 credential/locator 泄漏）全通过） |
 | 最近 | **Cloud Skills 前端 Demo UI（Skills Demo UI）**（`frontend/src/features/skills` + `frontend/src/features/agents`：接真实 public API 的演示前端 —— Skills 列表/详情 + `POST /skills/imports` 导入（ZIP/TAR、显示名称、部分成功/`activation_conflict`/preparation failure 分类展示）+ Agent 列表/详情/状态开关/绑定（attach/enable/disable/detach）+ Execution 准入与冻结快照；wire 字段全部取自 orval 重生成的 TS 类型、绝不手写 `agent_id`/`skill_id` 风格；生产路由不以 mock 数据为权威；Execution body 仅携带 `agentId`、稳定 Idempotency-Key（重试复用、rerender 不铸新 Key、仅「创建另一个 Execution」换 Key）；快照权威 = `GET /executions/:executionId`、显式「此 Execution 已冻结」、`eligible` 显示「等待运行时投递」不做假生命周期；不展示/请求/记录 RetrievalCapability/signed URL/storage locator、不调用 `/internal/v1/*`；`npm run typecheck`/`lint`/`check:modules`/`check:docs`/`check:dup`/`format:check`/`build` 全通过；`test` 与 `check:dead`(knip) 因 Node 20 `ERR_REQUIRE_ESM` 为 PRE-EXISTING 阻塞；改动 uncommitted） |
+| 最近 | **Cloud Skills Folder Import Bugfix + Skill Delete**（修复文件夹导入误报「所选文件夹为空」—— 根因 `FileList.files` 活引用被 `e.target.value=''` 提前清空，先快照再清空、唯一以 `length===0` 判空；新增 `DELETE /skills/:skillId` 软删（`version` + Idempotency-Key 幂等、creator 或 owner/admin、428/409/404 边界、置 `deleted_at` 不硬删/不删对象包/不 eager-GC revision、冻结 Execution 仍可读、未来准入排除已删 Skill）；前端详情页「删除技能」AlertDialog；`integration/skill_delete_test.go` 4 用例全通过；`go build`/`go test ./internal/contract/...`/`npm run typecheck`/`lint`/`format:check`/`build`/`check:docs`/`git diff --check` 全通过；`test`/knip 仍为 Node 20 PRE-EXISTING 阻塞；改动 uncommitted） |
 | 下一步 | **3C**（Issue Detail & Collaboration UI）；**Issue Workspace Scoping**（`issues.space_id`）；Agent / Team / Workflow / MCP / Skill Workspace Scoping；生产 Substrate / 看板分页与全文搜索 / 实时推送；真实 Agent/Team/Workflow/AI provider（BLOCKED ON EXTERNAL DESIGN）；**Cloud Skills 后续切片**（前端 Skills Demo UI 已接真实 API 完成；Node 下载/缓存投影/READY barrier；Controller dispatch/claim/lease relay；GC·retention；MinIO dev fixture；真实 provider CI，均未实现） |
 
 > 想看每个功能对应的接口和表，去 [../agent/api-reference.md](../agent/api-reference.md) 和

@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ImportSkillDialog } from '@/features/skills/import-skill-dialog'
 import { useSkills } from '@/features/skills/api'
-import { formatBytes, shortDigest } from '@/features/skills/present'
+import { formatBytes } from '@/features/skills/present'
 import { useCurrentSpace } from '@/features/spaces/current-space'
 import { workspacePaths } from '@/lib/paths'
 
@@ -17,8 +17,10 @@ const SKELETON_KEYS = ['one', 'two', 'three', 'four', 'five']
 
 /**
  * Live Skills of the current space, cursor-paginated. Each row links to the
- * Skill detail and shows its identity plus the current revision digest/size;
- * the "导入技能" action opens the import dialog against the real import API.
+ * Skill detail and shows its identity, the current revision's package
+ * description (falling back to the workspace summary) and size — never the
+ * content digest, which is machine metadata. The "导入技能" action opens the
+ * import dialog against the real import API.
  */
 export function SkillsPage({ slug }: { slug: string }) {
   const skills = useSkills(slug)
@@ -73,7 +75,7 @@ export function SkillsPage({ slug }: { slug: string }) {
   )
 }
 
-/** One Skill row: identity on the left, current-revision digest/size and update time on the right. */
+/** One Skill row: identity plus description on the left, current-revision size and update time on the right. */
 function SkillRow({ skill, to }: { skill: Skill; to: string }) {
   return (
     <Link to={to} className="flex items-center gap-3 border-b px-4 py-3 hover:bg-muted/50">
@@ -84,14 +86,13 @@ function SkillRow({ skill, to }: { skill: Skill; to: string }) {
           <Badge variant="outline">{skill.canonicalName}</Badge>
           <Badge variant="secondary">v{skill.version}</Badge>
         </div>
-        <p className="truncate text-xs text-muted-foreground">{skill.summary}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {skill.currentRevision?.description || skill.summary}
+        </p>
       </div>
       <div className="hidden shrink-0 text-right text-xs text-muted-foreground sm:block">
         {skill.currentRevision ? (
-          <>
-            <p>{shortDigest(skill.currentRevision.contentDigest)}</p>
-            <p>{formatBytes(skill.currentRevision.sizeBytes)}</p>
-          </>
+          <p>{formatBytes(skill.currentRevision.sizeBytes)}</p>
         ) : (
           <p>暂无版本</p>
         )}

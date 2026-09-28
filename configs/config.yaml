@@ -28,25 +28,24 @@ collaboration:
   development_fixtures: false
 control:
   grpc_addr: "127.0.0.1:8082" # Controller-facing gRPC, unauthenticated at this stage; loopback or private network only
-# Object Storage for Skill packages (production S3-compatible provider). Optional: when this whole
-# section is absent (as here), the process starts normally and Skill uploads are unavailable
-# (object_store_unavailable). Uncomment and fill in to enable real object storage; an invalid section
+# Object Storage for Skill packages (S3-compatible provider). Local dev points at the MinIO
+# container (cloud-minio on :9000); production supplies a real provider. An invalid section
 # fails startup. Every key below is also overridable via CLOUD_STORAGE_* (e.g. CLOUD_STORAGE_BUCKET).
-#storage:
-#  provider: s3              # fixed "s3"
-#  bucket: ora-skills        # single bucket; the name never enters durable state
-#  region: us-east-1         # protocol-required region placeholder for the endpoint
-#  endpoint: ""              # optional; empty = AWS default endpoint, non-empty = self-hosted endpoint
-#  path_style: false         # true = path-style addressing (self-hosted/OSS usually need it)
-#  credential_mode: environment  # environment | shared_credentials_file | workload_identity
-#  credentials_file: ""      # required when credential_mode=shared_credentials_file
-#  tls:
-#    verify: true            # default true (HTTPS + certificate verification)
-#    ca_file: ""             # optional custom CA bundle
-#  allow_insecure_http: false # default false; only explicit dev/test may use an http:// endpoint
-#  timeouts:
-#    connect: 5s             # connection establishment
-#    request: 30s            # per-operation end-to-end bound
+storage:
+  provider: s3              # fixed "s3"
+  bucket: ora-skills        # single bucket; the name never enters durable state
+  region: us-east-1         # protocol-required region placeholder for the endpoint
+  endpoint: http://127.0.0.1:9000  # self-hosted S3-compatible endpoint (MinIO)
+  path_style: true          # path-style addressing required by MinIO
+  credential_mode: environment  # environment | shared_credentials_file | workload_identity
+  # credentials_file: ""    # required only when credential_mode=shared_credentials_file
+  tls:
+    verify: true            # default true; the http:// endpoint below bypasses TLS
+  allow_insecure_http: true # local MinIO is plain http://
+  timeouts:
+    connect: 5s             # connection establishment
+    request: 30s            # per-operation end-to-end bound
+  retrieval_capability_ttl: 300s
 auth:
   audience: "ora-cloud"
   # Public keys of the local Gateway; generate them with `task setup` (config.toml). Production replaces

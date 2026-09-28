@@ -910,6 +910,7 @@ export interface Sandbox {
 
 export interface SkillRevision {
   contentDigest: string;
+  description: string;
   id: string;
   packageFormat: string;
   packageFormatVersion: number;
@@ -2092,6 +2093,11 @@ export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBody = {
   /** @maxLength 4096 */
   summary?: string;
   target_skill_id?: string;
+};
+
+export type DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdBody = {
+  /** @minimum 0 */
+  version: number;
 };
 
 export type DeleteApiV1TenantsTidWorkspacesWidBody = {

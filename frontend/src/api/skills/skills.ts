@@ -25,6 +25,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdBody,
   Error,
   GetApiV1TenantsTidSpacesSpaceIdSkills200,
   GetApiV1TenantsTidSpacesSpaceIdSkillsParams,
@@ -245,6 +246,77 @@ export const usePostApiV1TenantsTidSpacesSpaceIdSkillsImports = <TError = ErrorT
         TContext
       > => {
       return useMutation(getPostApiV1TenantsTidSpacesSpaceIdSkillsImportsMutationOptions(options), queryClient);
+    }
+    /**
+ * Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Archives the space (soft delete); requires owner and a matching version. The default space cannot be archived. Projects are unaffected. Soft-deletes a Skill; the creator or a workspace owner/admin may delete. The Skill disappears from the live list and future execution admission, but its SkillRevisions, object storage package, and any historical ExecutionSkillBinding snapshot are preserved, so a frozen Execution bound to this Skill's revision stays readable. Requires a matching version and an idempotency key. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.
+ * @summary DELETE /api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId
+ */
+export const deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId = (
+    tid: string,
+    spaceId: string,
+    skillId: string,
+    deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdBody: DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdBody,
+ options?: SecondParameter<typeof customInstance>,signal?: AbortSignal
+) => {
+
+
+      return customInstance<Skill>(
+      {url: `/api/v1/tenants/${tid}/spaces/${spaceId}/skills/${skillId}`, method: 'DELETE',
+      headers: {'Content-Type': 'application/json', },
+      data: deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdBody, signal
+    },
+      options);
+    }
+
+
+
+
+export const getDeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationKey = () => ['deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId'] as const;
+
+export const getDeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId>>, TError,DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationVariables, TContext>, request?: SecondParameter<typeof customInstance>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId>>, TError,DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationVariables, TContext> => {
+
+const mutationKey = getDeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId>>, DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationVariables> = (props) => {
+          const {tid,spaceId,skillId,data} = props ?? {};
+
+          return  deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId(tid,spaceId,skillId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationResult = NonNullable<Awaited<ReturnType<typeof deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId>>>
+    export type DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationBody = DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdBody
+    export type DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationError = ErrorType<Error>
+    export type DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationVariables = {tid: string;spaceId: string;skillId: string;data: DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdBody}
+
+    /**
+ * @summary DELETE /api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId
+ */
+export const useDeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId>>, TError,DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationVariables, TContext>, request?: SecondParameter<typeof customInstance>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteApiV1TenantsTidSpacesSpaceIdSkillsSkillId>>,
+        TError,
+        DeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteApiV1TenantsTidSpacesSpaceIdSkillsSkillIdMutationOptions(options), queryClient);
     }
     /**
  * Public requests require a gateway service credential plus a caller-bound user credential. Tenant membership is checked before lookup; resource reads filter tenant in SQL, and space-scoped projects and their runtime workspaces additionally require active membership of that workspace, while unscoped projects stay owner-scoped. Only joined members can read a space. Reads one live Skill's public identity and current revision; any active member can read. A soft-deleted or foreign-workspace Skill is 404 (no existence leak); storage credentials and locators are never exposed. Mutation version conflicts return 409; a missing required version returns 428. Unknown fields are rejected. Lists use ascending UUID pagination.

@@ -1,7 +1,7 @@
 import type { AttemptState } from '@/api/generated.schemas'
-import { formatBytes, shortDigest } from '@/features/skills/present'
+import { formatBytes } from '@/features/skills/present'
 
-export { formatBytes, shortDigest }
+export { formatBytes }
 
 /**
  * Product wording for the attempt lifecycle. `eligible` is what a freshly
