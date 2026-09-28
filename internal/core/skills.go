@@ -494,3 +494,76 @@ func candidateErrorCode(err error) string {
 	}
 	return "skill_package_invalid"
 }
+
+// skillReadSelect is the shared public read projection for a live Skill. It joins the exact current
+// SkillRevision through the same composite identity (current_revision_id, id) as the write path and
+// exposes only public fields — never object_locator/bucket/storage key/provider or any signed URL.
+const skillReadSelect = `SELECT s.id, s.workspace_id, s.canonical_name, s.display_name, s.summary,
+	s.version, s.created_at, s.updated_at,
+	sr.id AS current_revision_id, sr.content_digest, sr.size_bytes, sr.package_format, sr.package_format_version
+	FROM skills s
+	LEFT JOIN skill_revisions sr ON sr.id = s.current_revision_id AND sr.skill_id = s.id`
+
+// projectSkill reshapes a raw skillReadSelect row into the public Skill object: the flattened
+// revision columns become a nested currentRevision, and storage/locator fields are already absent
+// from the select. currentRevision is omitted when the Skill has no activated revision yet.
+func projectSkill(o Object) Object {
+	out := Object{
+		"id":            o.S("id"),
+		"workspaceId":   o.S("workspaceId"),
+		"canonicalName": o.S("canonicalName"),
+		"displayName":   o.S("displayName"),
+		"summary":       o.S("summary"),
+		"version":       o.N("version"),
+		"createdAt":     o.S("createdAt"),
+		"updatedAt":     o.S("updatedAt"),
+	}
+	if revID := o.S("currentRevisionId"); revID != "" {
+		out["currentRevision"] = Object{
+			"id":                   revID,
+			"contentDigest":        o.S("contentDigest"),
+			"sizeBytes":            o.N("sizeBytes"),
+			"packageFormat":        o.S("packageFormat"),
+			"packageFormatVersion": o.N("packageFormatVersion"),
+		}
+	}
+	return out
+}
+
+// listSkills pages the live Skills of a Collaboration Workspace (member+), ordered by
+// (canonical_name, skill id) for a deterministic walk. The cursor stays an opaque skill id, and the
+// projection never exposes object storage fields (D8).
+func listSkills(t *transaction, r *PublicRequest, uid string) Object {
+	agentSpace(t, r.SpaceID, uid, false)
+	out := pageSkillList(t, skillReadSelect+` WHERE s.workspace_id=$1 AND s.deleted_at IS NULL`, []any{r.SpaceID}, r)
+	items := out["items"].([]Object)
+	projected := make([]Object, 0, len(items))
+	for _, it := range items {
+		projected = append(projected, projectSkill(it))
+	}
+	out["items"] = projected
+	return out
+}
+
+// getSkill reads one live Skill (member+). A soft-deleted Skill, a foreign-workspace Skill, or a
+// missing Skill is uniformly 404 (no existence leak, D11).
+func getSkill(t *transaction, r *PublicRequest, uid string) Object {
+	agentSpace(t, r.SpaceID, uid, false)
+	require(validID(r.SkillID), 404, "not_found")
+	o := t.one(skillReadSelect+` WHERE s.id=$1 AND s.workspace_id=$2 AND s.deleted_at IS NULL`, r.SkillID, r.SpaceID)
+	require(o != nil, 404, "not_found")
+	return projectSkill(o)
+}
+
+// pageSkillList pages the Skill list in ascending (canonical_name, id) order. canonical_name is not
+// unique, so the cursor predicate resolves the anchor row's canonical_name from the skills table
+// before comparing the pair — the same composite-cursor pattern as pageByCreation, keeping the
+// public cursor an opaque skill id.
+func pageSkillList(t *transaction, q string, args []any, r *PublicRequest) Object {
+	if r.After != "" {
+		require(validID(r.After), 400, "invalid_cursor")
+		args = append(args, r.After)
+		q += " AND (s.canonical_name, s.id) > ((SELECT a.canonical_name FROM skills a WHERE a.id=$" + itoa(len(args)) + "::uuid), $" + itoa(len(args)) + "::uuid)"
+	}
+	return window(t, q+" ORDER BY s.canonical_name, s.id", args, r)
+}

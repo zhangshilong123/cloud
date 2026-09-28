@@ -122,16 +122,6 @@ export interface InboxItem {
   createdAt: string
 }
 
-export interface Skill {
-  id: string
-  workspaceId: string
-  name: string
-  description: string
-  category: string
-  enabled: boolean
-  usageCount: number
-}
-
 export interface Runtime {
   id: string
   workspaceId: string

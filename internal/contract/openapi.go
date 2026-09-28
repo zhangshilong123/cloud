@@ -228,6 +228,50 @@ func Document() map[string]any {
 		"replayed":      boolean(),
 		"errorCode":     str(),
 	}, "candidateRoot", "canonicalName", "skillId", "revisionId", "ingestionId", "state", "activation", "replayed", "errorCode")
+	// Public Skill read projection (Step UI-API): identity plus the exact current revision, never
+	// any object storage field.
+	s["SkillRevision"] = object(obj{
+		"id":                   uuid(),
+		"contentDigest":        str(),
+		"sizeBytes":            number(),
+		"packageFormat":        str(),
+		"packageFormatVersion": number(),
+	}, "id", "contentDigest", "sizeBytes", "packageFormat", "packageFormatVersion")
+	s["Skill"] = object(obj{
+		"id":              uuid(),
+		"workspaceId":     uuid(),
+		"canonicalName":   str(),
+		"displayName":     str(),
+		"summary":         str(),
+		"version":         number(),
+		"createdAt":       timestamp(),
+		"updatedAt":       timestamp(),
+		"currentRevision": optional(ref("SkillRevision")),
+	}, "id", "workspaceId", "canonicalName", "displayName", "summary", "version", "createdAt", "updatedAt", "currentRevision")
+	// Execution aggregate (Phase 5): the admission response and the read-back share this shape.
+	s["Attempt"] = object(obj{
+		"attemptId":       uuid(),
+		"executionId":     uuid(),
+		"ordinal":         number(),
+		"state":           enumeration("eligible", "dispatched", "running", "succeeded", "failed", "canceled", "superseded"),
+		"nodeId":          optional(str()),
+		"result":          optional(obj{"type": "object", "additionalProperties": true}),
+		"dispatchedEpoch": optional(number()),
+		"createdAt":       timestamp(),
+		"updatedAt":       timestamp(),
+	}, "attemptId", "executionId", "ordinal", "state", "nodeId", "result", "dispatchedEpoch", "createdAt", "updatedAt")
+	s["Execution"] = resource("executionId tenantId workspaceId agentId actorUserId input createdAt", "")
+	executionProps := properties(s, "Execution")
+	executionProps["input"] = obj{"type": "object", "additionalProperties": true}
+	s["ExecutionSkillBinding"] = resource("executionId skillId skillRevisionId contentDigest sizeBytes packageFormat packageFormatVersion createdAt canonicalName", "")
+	execBindingProps := properties(s, "ExecutionSkillBinding")
+	execBindingProps["sizeBytes"] = number()
+	execBindingProps["packageFormatVersion"] = number()
+	s["ExecutionRecord"] = object(obj{
+		"execution":     ref("Execution"),
+		"attempts":      array(ref("Attempt")),
+		"skillBindings": array(ref("ExecutionSkillBinding")),
+	}, "execution", "attempts", "skillBindings")
 	paths := obj{}
 	for _, r := range router.Routes() {
 		path := r.Path
@@ -332,6 +376,10 @@ func tag(r router.Route) string {
 		return "clones"
 	case strings.Contains(r.Path, "/agents"):
 		return "agents"
+	case strings.Contains(r.Path, "/skills"):
+		return "skills"
+	case strings.Contains(r.Path, "/executions"):
+		return "executions"
 	case strings.Contains(r.Path, "/spaces"):
 		return "spaces"
 	case strings.Contains(r.Path, "/workspaces"):
@@ -402,6 +450,13 @@ func responseSchema(r router.Route) (schema obj, status string) {
 			return object(obj{"items": array(ref("Agent")), "nextCursor": str()}, "items", "nextCursor"), "200"
 		}
 		return ref("Agent"), "200"
+	case strings.Contains(r.Path, "/skills"):
+		if r.Method == "GET" && isList(r) {
+			return object(obj{"items": array(ref("Skill")), "nextCursor": str()}, "items", "nextCursor"), "200"
+		}
+		return ref("Skill"), "200"
+	case strings.Contains(r.Path, "/executions"):
+		return ref("ExecutionRecord"), "200"
 	case strings.Contains(r.Path, "/spaces"):
 		switch {
 		case strings.Contains(r.Path, "/members"):
@@ -641,7 +696,7 @@ func inputSchema(name string, r router.Route) obj {
 		return uuid()
 	case "category":
 		return enumeration("unstarted", "started", "done", "closed")
-	case "labelId", "userId", "assigneeId", "executorId", "refId", "parentId", "projectRef", "targetId", "skillId":
+	case "labelId", "userId", "assigneeId", "executorId", "refId", "parentId", "projectRef", "targetId", "skillId", "agentId":
 		return uuid()
 	case "ids":
 		return array(uuid())
@@ -742,6 +797,20 @@ func description(r router.Route) string {
 			base += "Soft-deletes an Agent; the creator or a workspace owner/admin may delete. A soft-deleted Agent denies new executions while historical state is preserved. Requires a matching version and an idempotency key. "
 		default:
 			base += "Reads an Agent or lists the workspace's live Agents; any active member can read. "
+		}
+	}
+	if strings.Contains(r.Path, "/skills") && !strings.Contains(r.Path, "/agents") {
+		if r.Method == "GET" && isList(r) {
+			base += "Lists the workspace's live Skills in deterministic (canonical_name, skill id) order with UUID pagination; any active member can read. Only public identity and current-revision fields are returned — never the object storage locator, bucket, storage key, provider, or any signed URL. "
+		} else {
+			base += "Reads one live Skill's public identity and current revision; any active member can read. A soft-deleted or foreign-workspace Skill is 404 (no existence leak); storage credentials and locators are never exposed. "
+		}
+	}
+	if strings.Contains(r.Path, "/executions") {
+		if r.Method == "POST" {
+			base += "Admits one Execution for an Agent, atomically freezing its enabled Skill bindings to their exact current revisions plus a first eligible Attempt. The body carries only agentId; the Skill set is resolved server-side from durable bindings, never from caller input. The Idempotency-Key scopes the generic tenant/user replay, so a retry returns the original Execution rather than creating a second one. "
+		} else {
+			base += "Reads a frozen Execution aggregate — execution, attempts (real states, starting eligible) and immutable skill bindings — by id, scoped to the caller's workspace. The snapshot is immutable and survives later binding disable/detach/revision change; no credential or signed URL is present. "
 		}
 	}
 	if strings.Contains(r.Path, "/clones") {

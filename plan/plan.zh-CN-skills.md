@@ -1914,6 +1914,61 @@ soft-deleted Skill 与 disabled binding。
       capability/signed-URL/object locator、无 caller-supplied `skill_ids`（ADR D8/D13/D14）。
 - [ ] RetrievalCapability / Node 交付 / Agent UI 仍 NOT implemented（后续阶段；Execution snapshot 已由 Phase 5 交付）。
 
+### Step UI-API —— Skills Demo public contract 补齐 —— 已完成
+
+状态：**implemented —— 四个 public endpoints；无 UI、无 Phase 6A/6B、无 migration。** 前端 Skills demo
+（`Phase 9 · Demo UI slice`）被 public-contract 缺口阻塞：HTTP contract 只有 Skill import + Agent CRUD/binding，
+没有 Skill list/detail，也没有 Execution admission/snapshot read。本切片用**恰好四个** public endpoint 补齐，
+并原样复用现有 Phase 4/5 权威——**不新增**任何领域语义、**不新增** migration、**不新增** Node/Controller
+交付。`0015`/`0016`/`0017`/`0018` 保持逐字节不变。
+
+**范围（仅本切片）：**
+- `GET  /api/v1/tenants/:tid/spaces/:spaceId/skills` —— 分页列出 workspace 存活 Skills（member+），按
+  `canonical_name` 再 `skill_id` 确定性排序（复合游标），每个 Skill 投影其 `current_revision` 内容身份
+  （`id, content_digest, size_bytes, package_format, package_format_version`）——绝不暴露 object locator /
+  storage key / provider / signed URL（public upload ADR D9 / D26/D30）。
+- `GET  /api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId` —— 读取一个存活 Skill（member+）；跨 workspace 或
+  soft-deleted → `404 not_found`（无存在性泄漏，ADR D11）。
+- `POST /api/v1/tenants/:tid/spaces/:spaceId/executions` —— 为一个 active Agent 准入一次 Execution；body 只接受
+  `agentId`（绝不接受 `skill_ids` / revisions / bindings / locator，ADR D3/D8）。复用 Phase 5 `AdmitExecution`
+  权威：enabled bindings → exact current revisions → 在单一 DB-only 事务内写入不可变 `ExecutionSkillBinding` 行 +
+  首个 `eligible` Attempt。通用 `Idempotency-Key` envelope（`idempotency_records`，0001_core.sql）与
+  `createAgent` / `attachAgentSkill` 完全一致地生效——现有 public 幂等 seam 已覆盖 admission，无需新 durable
+  state（§27 已回答；§20 满足）。
+- `GET  /api/v1/tenants/:tid/spaces/:spaceId/executions/:executionId` —— 读取 frozen snapshot
+  （`execution` + `attempts` + `skillBindings`），只从不可变的 `executions` / `attempts` /
+  `execution_skill_bindings` 表解析（绝不读 `agent_skill_bindings` / `skills.current_revision_id`），因此之后
+  binding disable/detach、revision 变更、Skill/Agent soft-delete 都不改变 snapshot（§15/§16）。任意 active member
+  可读。
+
+**非目标（本切片）：** 无 Skill revision history、无 Skill mutation、无 Execution cancel/retry/Run-Again 面、无
+Node dispatch、无 RetrievalCapability 浏览器 API、无 Controller/Node 交付、无 READY、无 materialization、无
+前端 UI。
+
+**JSON 约定：** 所有 public 请求/响应体都是 `camelCase`（仓库级 `camel()` 投影在持久化边界完成），因此
+admission body 为 `{ "agentId": "..." }`，snapshot 使用 `executionId` / `contentDigest` / `sizeBytes` /
+`packageFormat` / `packageFormatVersion` / `skillRevisionId` / `canonicalName`——spec 里的 snake_case 是数据库
+列名，照旧在持久化边界翻译。
+
+**Contract 同步：** `router.Routes()` + `internal/contract/openapi.go`（Skill/SkillRevision/Execution/Attempt/
+ExecutionSkillBinding/ExecutionRecord schema + `responseSchema`/`tag`/`description`/`inputSchema` case）+ 重生成
+`api/openapi.json` + 重生成 orval client。不手改 generated artifact。无 UI。
+
+**已交付（本切片）：**
+- [x] **路由 + core 读 seam** —— `router.Routes()` 新增四个 public 路由；`internal/core/skills.go` 新增
+      `skillReadSelect`/`projectSkill`/`listSkills`/`getSkill`/`pageSkillList`；`internal/core/executions.go` 新增
+      `admitExecutionPublic`/`getExecution` 委托给 Phase 5 `admitExecution`/`executionRecord`；`readPublic` 与
+      dispatch switch 处理四个动词（member+ / 404 no-leak / 通用 Idempotency-Key replay）。
+- [x] **OpenAPI** —— `Skill`/`SkillRevision`/`Execution`/`Attempt`/`ExecutionSkillBinding`/`ExecutionRecord` schema 与
+      `responseSchema`/`tag`/`description`/`inputSchema` case 写入 `internal/contract/openapi.go`；`api/openapi.json`
+      重生成（`go run ./cmd/openapi`）；`TestPublishedOpenAPIIsValidAndCurrent` 通过。
+- [x] **前端 client** —— orval 重生成（`npm run api:generate`）：新增 `skills` + `executions` tag 模块；
+      `npm run typecheck` 通过。无 UI 实现。
+- [x] **测试** —— `integration/skill_execution_public_test.go` 覆盖 skill list/detail（排序、分页、soft-delete 排除、
+      member/跨 workspace no-leak）、execution admission（仅 agentId、真实 eligible attempt、幂等 replay、成员边界）、
+      frozen-snapshot 不可变性（E1→R1 后 R2：E1 保持 R1，E2→R2）、无 credential/locator 泄漏。全量 integration +
+      contract + router 套件通过。
+
 Step 5B（Execution snapshot，Phase 5）现已落地：具备 durable `AgentSkillBinding` selection authority 后，
 Execution/Attempt/ExecutionSkillBinding 已实现（见下方 Phase 5）。
 
@@ -2012,6 +2067,51 @@ snapshot 是后续 capability 签发唯一被授权的依据。
       （授权、terminal fencing、storage_not_configured、invalid_locator、无持久化、refresh 保持 revision）。
 - [ ] Node downloader/cache、Controller relay（不代理/不选 revision）、READY barrier —— 后续阶段。
 
+### Phase 6A —— Node Skill retrieval & immutable cache：runtime 前置已解决、设计契约已闭合；实现 BLOCKED
+
+状态：**设计契约已闭合；实现尚未开始（被阻塞）**。Phase 6A 打通 Controller → Node 的 Skill delivery
+contract，并在 Node 实现 immutable package retrieval、完整性验证与 digest-addressed immutable cache；
+它是 Phase 6 的交付半边加上 Phase 7 的 cache 半边。design decision D35（Cloud Execution/Attempt ↔ Node
+execution identity 映射）与 D36（Rust canonical codec ownership）已于 2026-09-27 获批，ADR
+`specs/decisions/node/agent-runtime/0-skill-materialization-and-readiness.md` 因此从 `proposed` 升为
+`approved` —— `approved` 表示设计冻结，**不表示实现完成**。此前一个 audit-only 的 prerequisite 步骤把
+specs 与实际 runtime checkout 对齐：
+
+- **runtime 前置已解决**。已 implemented ADR 所述 Controller/Node runtime 确实存在；只是 root superproject
+  把已陈旧的 `desktop` 子模块 pin 住了。**固定 runtime baseline：
+  `desktop` `652af715cbca5f50c892299ea815a08896f41b35`（`origin/main`）**，从原 pin
+  `fcd374fa18b2fa44ab0ccbb5ce7885808a93bb54` fast-forward 而来。它包含 `apps/ora-controller`（PR #595
+  可执行入口组合、PR #601/#602 `CoordinationStore` + `CloudStore`）、`apps/ora-node`、`crates/node-transport`、
+  `crates/controller-proto`、`crates/node-protocol` 与 `crates/skill-package`。子模块 working tree 已更新；
+  root gitlink 变更保持 **uncommitted**。
+- **契约状态 —— 三项中仍有一项阻塞：**
+  1. **Cloud ↔ `controller-proto` 契约同步 —— 仍然 BLOCKING。** `crates/controller-proto` 从
+     `third_party/cloud/proto` 生成 Rust client，该子模块 pin 在 `19d84041`（cloud PR #31）。Step 5B 的
+     `SkillRunSpec` / `SkillBundleRef` / `MintSkillRetrieval` / `SkillRetrievalCapability` 只存在于 Cloud 本地分支
+     `skill_make`（`c35a373`），**未推送到任何 remote**，且 `upstream/main` 既无这些类型也无 `internal/skillpkg/`。
+     因此 Controller 目前无法反序列化 Cloud 签发的契约。必须先把 pin 的 Cloud commit 变成可 fetch 的对象再重新
+     生成；不允许手抄契约副本。
+  2. **Rust canonical `ora-skill-package` v1 codec 契约 —— 设计已闭合（D36），实现待做。** 冻结
+     `crates/skill-package`（`ora-skill-package`）为 v1 容器 codec 的唯一 Rust ownership seam（Node 只需
+     decode + verify；仅当 crate architecture 明确需要才做 encode）。它当前只读 folder tree/archive 与
+     `SKILL.md` manifest，**没有**容器字节 codec：没有 `ORASKILL` magic、没有 ManifestV1 encoder、没有
+     `package_digest` / tree digest。验收标准是与 `cloud/internal/skillpkg` 逐字节兼容，外加跨语言 golden
+     vectors —— 仅 “Rust encode → Rust decode” 自洽不构成证据。编码前待确认：`ora-skill-package` 目前会引入
+     `ora-domain`，而 `apps/ora-node` 现在并不依赖它（如 dependency graph 证明该 ownership 会迫使 ora-node 引入
+     明显不合理的 Desktop domain dependency，必须 STOP，不得自行拆 crate）。
+  3. **Node attempt identity 契约 —— 设计已闭合（D35），delivery 字段待做。** Cloud 区分逻辑 `execution_id` 与
+     物理 `attempt_id`（migration 0018）；`ora-node-protocol::ExecutionId` 的文档是 “Identity of one Node
+     execution attempt for an operation”，映射到 Cloud `attempt_id`。同时携带逻辑 execution identity 与物理
+     attempt identity 的具体 delivery message 仍待实现。
+- **Baseline gates 未运行。** 本机没有 Rust toolchain（`cargo`、`rustc`、`task` 均不存在，也没有 toolchain
+  目录），因此无法对新 baseline 执行 `cargo check` / `task test:crates`。验证仅限于对 workspace membership、
+  binary target 与 ADR 路径映射的静态检查。这是环境限制，不是通过的 gate。
+
+- [ ] Downloader / bounded streaming retrieval —— 未开始。
+- [ ] 按冻结 `SkillBundleRef` 做完整性验证 —— 未开始。
+- [ ] digest-addressed immutable cache（staging → verify → atomic publish）—— 未开始。
+- [ ] capability refresh（`execution_id` + `attempt_id` + `skill_revision_id`）—— 未开始。
+
 ## Phase 7 — Node verified cache
 
 - retrieval；
@@ -2037,6 +2137,21 @@ snapshot 是后续 capability 签发唯一被授权的依据。
 - batch summary；
 - Skill metadata/revision display；
 - 本 wave 范围内 Agent assignment UI。
+
+### Demo UI slice —— Skills 管理 / Agent 绑定 / Execution snapshot —— 进行中（public contract 已具备）
+
+状态：**进行中 —— public contract 已具备。** Step UI-API 交付了 `GET /skills`、`GET /skills/{skillId}`、
+`POST /executions` 与 `GET /executions/{executionId}`，叠加既有 Skill import + Agent CRUD/binding 路由，前端现在可以
+完全基于真实 API 打通 demo 闭环，无需 fake data 或手写未公开 endpoint。
+
+本切片：Skills 管理（`GET /skills` list + limit/after 分页）、Skill import（`POST /skills/imports`，ZIP/未压缩 TAR、
+每次用户提交一个稳定 Idempotency-Key）、Skill detail + upload-new-revision（`GET /skills/{skillId}`）、Agent 管理
+（`GET/POST /agents`、`GET/PATCH/DELETE /agents/{agentId}`）、Agent Skill bindings（attach/enable-disable/detach，候选来自
+live Skill list）、Execution admission（`POST /executions`，body 仅 `agentId`），以及 frozen-snapshot inspector
+（`GET /executions/{executionId}`，真实 `eligible` attempt + immutable `skillBindings`）。
+
+非目标：Node delivery、READY、runtime materialization、fake execution，以及任何 RetrievalCapability 凭据展示
+（浏览器永不收到 signed URL）。
 
 ## Phase 10 — End-to-end audit
 

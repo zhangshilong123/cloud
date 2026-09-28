@@ -1703,6 +1703,61 @@ rows; the selection helper below excludes soft-deleted Skills and disabled bindi
 - [ ] RetrievalCapability / Node delivery / Agent UI remain NOT implemented (later phases; the Execution snapshot
       was delivered by Phase 5).
 
+### Step UI-API — Skills Demo public contract closure — DONE
+
+Status: **implemented — four public endpoints; no UI, no Phase 6A/6B, no migration.** The frontend Skills demo
+(`Phase 9 · Demo UI slice`) is blocked on public-contract gaps: the HTTP contract exposes Skill import + Agent
+CRUD/binding but no Skill list/detail and no Execution admission/snapshot read. This slice closes that gap with
+exactly **four** public endpoints that reuse the existing Phase 4/5 authority verbatim — it adds **no** new domain
+semantics, **no** migration, and **no** Node/Controller delivery. `0015`/`0016`/`0017`/`0018` stay byte-identical.
+
+**Scope (this slice only):**
+- `GET  /api/v1/tenants/:tid/spaces/:spaceId/skills` — page the workspace's live Skills (member+), deterministically
+  ordered by `canonical_name` then `skill_id` (composite cursor), each projecting its `current_revision` content
+  identity (`id, content_digest, size_bytes, package_format, package_format_version`) — never the object locator /
+  storage key / provider / signed URL (public upload ADR D9 / D26/D30).
+- `GET  /api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId` — read one live Skill (member+); cross-workspace or
+  soft-deleted → `404 not_found` (no existence leak, ADR D11).
+- `POST /api/v1/tenants/:tid/spaces/:spaceId/executions` — admit one Execution for an active Agent; body accepts only
+  `agentId` (never `skill_ids` / revisions / bindings / locator, ADR D3/D8). Reuses the Phase 5 `AdmitExecution`
+  authority: enabled bindings → exact current revisions → immutable `ExecutionSkillBinding` rows + first `eligible`
+  Attempt in one DB-only transaction. The generic `Idempotency-Key` envelope (`idempotency_records`, 0001_core.sql)
+  applies exactly as `createAgent` / `attachAgentSkill` — the existing public idempotency seam covers admission with
+  no new durable state (§27 answered; §20 satisfied).
+- `GET  /api/v1/tenants/:tid/spaces/:spaceId/executions/:executionId` — read the frozen snapshot
+  (`execution` + `attempts` + `skillBindings`) resolved solely from the immutable `executions` / `attempts` /
+  `execution_skill_bindings` tables (never `agent_skill_bindings` / `skills.current_revision_id`), so a later binding
+  disable/detach, revision change, or Skill/Agent soft-delete never alters the snapshot (§15/§16). Any active member
+  can read.
+
+**Non-goals (this slice):** no Skill revision history, no Skill mutation, no Execution cancellation/retry/Run-Again
+surface, no Node dispatch, no RetrievalCapability browser API, no Controller/Node delivery, no READY, no
+materialization, no frontend UI.
+
+**JSON convention:** all public request/response bodies are `camelCase` (repo-wide `camel()` projection at the
+persistence boundary), so the admission body is `{ "agentId": "..." }` and the snapshot uses `executionId` /
+`contentDigest` / `sizeBytes` / `packageFormat` / `packageFormatVersion` / `skillRevisionId` / `canonicalName` —
+the snake_case names in the spec are the database column names, translated as everywhere else.
+
+**Contract sync:** `router.Routes()` + `internal/contract/openapi.go` (Skill/SkillRevision/Execution/Attempt/
+ExecutionSkillBinding/ExecutionRecord schemas + `responseSchema`/`tag`/`description`/`inputSchema` cases) + regenerate
+`api/openapi.json` + regenerate the orval client. No hand-edited generated artifacts. No UI.
+
+**Delivered (this slice):**
+- [x] **Routes + core read seam** — `router.Routes()` adds the four public routes; `internal/core/skills.go` adds
+      `skillReadSelect`/`projectSkill`/`listSkills`/`getSkill`/`pageSkillList`; `internal/core/executions.go` adds
+      `admitExecutionPublic`/`getExecution` delegating to the Phase 5 `admitExecution`/`executionRecord`; `readPublic`
+      + the dispatch switch handle the four verbs (member+ / 404 no-leak / generic Idempotency-Key replay).
+- [x] **OpenAPI** — `Skill`/`SkillRevision`/`Execution`/`Attempt`/`ExecutionSkillBinding`/`ExecutionRecord` schemas and
+      `responseSchema`/`tag`/`description`/`inputSchema` cases in `internal/contract/openapi.go`; `api/openapi.json`
+      regenerated (`go run ./cmd/openapi`); `TestPublishedOpenAPIIsValidAndCurrent` green.
+- [x] **Frontend client** — orval regenerated (`npm run api:generate`): new `skills` + `executions` tag modules;
+      `npm run typecheck` green. No UI implemented.
+- [x] **Tests** — `integration/skill_execution_public_test.go` covers skill list/detail (ordering, pagination,
+      soft-delete exclusion, member/cross-workspace no-leak), execution admission (agentId-only, real eligible attempt,
+      idempotent replay, membership), frozen-snapshot immutability (E1→R1 then R2: E1 stays R1, E2→R2), and no
+      credential/locator leakage. Full integration + contract + router suites green.
+
 Step 5B (Execution snapshot, Phase 5) is now landed: with its durable `AgentSkillBinding` selection authority in
 place, the Execution/Attempt/ExecutionSkillBinding snapshot is implemented (see Phase 5 below).
 
@@ -1807,6 +1862,51 @@ credential logging (redacted `String()` + class-only fault messages).
       invalid_locator, no-persistence, refresh-preserves-revision).
 - [ ] Node downloader/cache, Controller relay (no proxy/select), READY barrier — later phases.
 
+### Phase 6A — Node Skill retrieval & immutable cache: runtime prerequisite resolved; implementation BLOCKED
+
+Status: **design contract closed; implementation not started (blocked)**. Phase 6A connects the Controller → Node
+Skill delivery contract and implements Node immutable package retrieval, integrity verification and a
+digest-addressed immutable cache. It is the delivery half of Phase 6 plus the cache half of Phase 7. An audit-only
+prerequisite step reconciled the specs with the actual runtime checkout; the Node-side design is now frozen
+(`specs/decisions/node/agent-runtime/0-skill-materialization-and-readiness.md` moved `proposed` → `approved` on
+2026-09-27, with D35 identity mapping and D36 codec ownership approved).
+
+- **Runtime prerequisite resolved.** The Controller/Node runtimes the implemented ADRs describe do exist; the root
+  superproject had merely pinned a stale `desktop` submodule. **Fixed runtime baseline:
+  `desktop` `652af715cbca5f50c892299ea815a08896f41b35` (`origin/main`)**, a fast-forward from the previous pin
+  `fcd374fa18b2fa44ab0ccbb5ce7885808a93bb54`. It carries `apps/ora-controller` (PR #595 executable composition,
+  PR #601/#602 `CoordinationStore` + `CloudStore`), `apps/ora-node`, `crates/node-transport`,
+  `crates/controller-proto`, `crates/node-protocol` and `crates/skill-package`. The submodule working tree is
+  updated; the root gitlink change remains **uncommitted**.
+- **Contract status — one of three still blocking:**
+  1. **Cloud ↔ `controller-proto` contract synchronization — STILL BLOCKING.** `crates/controller-proto` generates
+     its Rust client from `third_party/cloud/proto`, pinned at `19d84041` (cloud PR #31). Step 5B's `SkillRunSpec` /
+     `SkillBundleRef` / `MintSkillRetrieval` / `SkillRetrievalCapability` exist only on the local Cloud branch
+     `skill_make` (`c35a373`), which is pushed to **no** remote, and `upstream/main` carries neither those types
+     nor `internal/skillpkg/`. The Controller therefore cannot yet deserialize what Cloud mints. The pinned Cloud
+     commit must become a fetchable object before regeneration; a handwritten contract copy is not acceptable.
+  2. **Rust canonical `ora-skill-package` v1 codec contract — DESIGN CLOSED (D36), implementation pending.**
+     `crates/skill-package` (`ora-skill-package`) is frozen as the single Rust ownership seam for the v1 container
+     codec (Node needs decode + verify; encode only if the crate architecture requires it). It today reads folder
+     trees/archives and `SKILL.md` manifests and has **no** container byte codec: no `ORASKILL` magic, no ManifestV1
+     encoder, no `package_digest` / tree digest. Byte-for-byte parity with `cloud/internal/skillpkg` plus
+     cross-language golden vectors are the acceptance criteria — a Rust-encode → Rust-decode round trip is not
+     sufficient evidence. Open question to confirm before coding: `ora-skill-package` currently pulls `ora-domain`,
+     which `apps/ora-node` does not depend on today.
+  3. **Node attempt identity contract — DESIGN CLOSED (D35), delivery field pending.** Cloud distinguishes a logical
+     `execution_id` from a physical `attempt_id` (migration 0018); `ora-node-protocol::ExecutionId` is documented as
+     "Identity of one Node execution attempt for an operation" and maps to Cloud `attempt_id`. The concrete delivery
+     message that carries both the logical execution identity and the physical attempt identity is still to be built.
+- **Baseline gates NOT RUN.** This machine has no Rust toolchain (`cargo`, `rustc` and `task` are all absent and no
+  toolchain directory exists), so `cargo check` / `task test:crates` could not be executed against the new baseline.
+  Verification was limited to static checks of workspace membership, binary targets and ADR path mapping. This is an
+  environment limitation, not a passing gate.
+
+- [ ] Downloader / bounded streaming retrieval — not started.
+- [ ] Integrity verification against the frozen `SkillBundleRef` — not started.
+- [ ] Digest-addressed immutable cache (staging → verify → atomic publish) — not started.
+- [ ] Capability refresh (`execution_id` + `attempt_id` + `skill_revision_id`) — not started.
+
 ## Phase 7 — Node verified cache
 
 - retrieval;
@@ -1832,6 +1932,24 @@ credential logging (redacted `String()` + class-only fault messages).
 - batch summary;
 - Skill metadata/revision display;
 - Agent assignment UI as scoped for this wave.
+
+### Demo UI slice — Skills management / Agent binding / Execution snapshot — DONE
+
+Status: **implemented — the frontend demo loop now runs against real public APIs.** Step UI-API delivered
+`GET /skills`, `GET /skills/{skillId}`, `POST /executions` and `GET /executions/{executionId}` on top of the existing
+Skill import + Agent CRUD/binding routes; the `frontend/` Demo UI (`src/features/skills`, `src/features/agents`) now calls
+them with wire fields taken from the regenerated orval types, no mock-data authority, execution admission carrying only
+`agentId`, stable Idempotency-Keys, and snapshot authority from `GET /executions/{executionId}` only.
+
+This slice: Skills management (`GET /skills` list + limit/after pagination), Skill import (`POST /skills/imports`,
+ZIP/uncompressed TAR, one per-submission Idempotency-Key), Skill detail + upload-new-revision (`GET /skills/{skillId}`),
+Agent management (`GET/POST /agents`, `GET/PATCH/DELETE /agents/{agentId}`), Agent Skill bindings
+(attach/enable-disable/detach against the live Skill list), Execution admission (`POST /executions`, body only `agentId`),
+and the frozen-snapshot inspector (`GET /executions/{executionId}` with real `eligible` attempts and immutable
+`skillBindings`).
+
+Non-goals: Node delivery, READY, runtime materialization, fake execution, and any RetrievalCapability credential display
+(the browser never receives a signed URL).
 
 ## Phase 10 — End-to-end audit
 

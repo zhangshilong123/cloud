@@ -10,7 +10,6 @@ import type {
   IssueStatus,
   Project,
   Runtime,
-  Skill,
   Squad,
   User,
   Workspace,
@@ -430,27 +429,6 @@ export const inboxItems: InboxItem[] = Array.from({ length: 20 }, (_, i) => {
     createdAt: faker.date.recent({ days: 10 }).toISOString(),
   }
 })
-
-const SKILL_CATEGORIES = ['调研', '代码', '沟通', '数据', '运维']
-const SKILLS_DATA = [
-  { name: '网页搜索', description: '快速检索并汇总相关信息，辅助决策。' },
-  { name: '代码评审', description: '自动检查代码风格与潜在缺陷。' },
-  { name: 'SQL 查询构建', description: '根据自然语言描述生成可执行的查询语句。' },
-  { name: 'Slack 通知', description: '在关键事件发生时自动发送团队通知。' },
-  { name: 'PDF 摘要', description: '提取文档核心内容并生成摘要。' },
-  { name: '测试用例生成', description: '基于代码变更自动生成测试用例。' },
-  { name: '更新日志撰写', description: '汇总版本改动并生成结构化更新日志。' },
-  { name: '故障分诊', description: '对突发故障进行初步分级与分派。' },
-]
-export const skills: Skill[] = SKILLS_DATA.map(({ name, description }, i) => ({
-  id: `skill-${i + 1}`,
-  workspaceId: workspace.id,
-  name,
-  description,
-  category: pick(SKILL_CATEGORIES),
-  enabled: faker.datatype.boolean({ probability: 0.75 }),
-  usageCount: faker.number.int({ min: 0, max: 2400 }),
-}))
 
 export const runtimes: Runtime[] = Array.from({ length: 6 }, (_, i) => ({
   id: `runtime-${i + 1}`,

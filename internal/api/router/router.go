@@ -103,6 +103,8 @@ func Routes() []Route {
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/projects", "", nil},
 		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/projects", "", []string{"name", "repositoryUrl", "defaultBranch", "credentialRefId"}},
 		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/skills/imports", "", []string{"source_kind", "source", "target_skill_id", "display_name", "summary"}},
+		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/skills", "", nil},
+		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/skills/:skillId", "", nil},
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/agents", "", nil},
 		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/agents", "", []string{"name"}},
 		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/agents/:agentId", "", nil},
@@ -112,6 +114,8 @@ func Routes() []Route {
 		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/agents/:agentId/skills", "", []string{"skillId"}},
 		{"PUT", "/api/v1/tenants/:tid/spaces/:spaceId/agents/:agentId/skills/:skillId", "", []string{"enabled", "version"}},
 		{"DELETE", "/api/v1/tenants/:tid/spaces/:spaceId/agents/:agentId/skills/:skillId", "", nil},
+		{"POST", "/api/v1/tenants/:tid/spaces/:spaceId/executions", "", []string{"agentId"}},
+		{"GET", "/api/v1/tenants/:tid/spaces/:spaceId/executions/:executionId", "", nil},
 		{"POST", "/internal/v1/access", "access", []string{"tenantId", "workspaceId", "action", "epoch"}},
 		{"POST", "/internal/v1/admissions", "admit", []string{"tenantId", "workspaceId", "action", "ticketId", "kind", "epoch"}},
 		{"POST", "/internal/v1/controller-lease/acquire", "lease_acquire", []string{}},
@@ -230,7 +234,7 @@ func New(store *core.Store, auth *core.Authenticator, log *zap.Logger) *gin.Engi
 						return
 					}
 				}
-				out, status, e = store.Public(c.Request.Context(), &core.PublicRequest{Method: c.Request.Method, Path: c.Request.URL.Path, TenantID: c.Param("tid"), ProjectID: c.Param("pid"), WorkspaceID: c.Param("wid"), SpaceID: c.Param("spaceId"), OperationID: c.Param("oid"), CloneID: c.Param("cloneId"), UserID: c.Param("uid"), IssueID: c.Param("iid"), CommentID: c.Param("cid"), LabelID: c.Param("lid"), StatusID: c.Param("sid"), ViewID: c.Param("vid"), RunID: c.Param("rid"), ContextRefID: c.Param("crid"), InteractionID: c.Param("ixid"), FormRef: c.Param("formRef"), AgentID: c.Param("agentId"), SkillID: c.Param("skillId"), Key: c.GetHeader("Idempotency-Key"), Limit: limit, After: c.Query("after"), Query: c.Query("q"), GroupBy: c.Query("by"), Body: body, Identity: user})
+				out, status, e = store.Public(c.Request.Context(), &core.PublicRequest{Method: c.Request.Method, Path: c.Request.URL.Path, TenantID: c.Param("tid"), ProjectID: c.Param("pid"), WorkspaceID: c.Param("wid"), SpaceID: c.Param("spaceId"), OperationID: c.Param("oid"), CloneID: c.Param("cloneId"), UserID: c.Param("uid"), IssueID: c.Param("iid"), CommentID: c.Param("cid"), LabelID: c.Param("lid"), StatusID: c.Param("sid"), ViewID: c.Param("vid"), RunID: c.Param("rid"), ContextRefID: c.Param("crid"), InteractionID: c.Param("ixid"), FormRef: c.Param("formRef"), AgentID: c.Param("agentId"), SkillID: c.Param("skillId"), ExecutionID: c.Param("executionId"), Key: c.GetHeader("Idempotency-Key"), Limit: limit, After: c.Query("after"), Query: c.Query("q"), GroupBy: c.Query("by"), Body: body, Identity: user})
 			} else {
 				out, e = store.Control(c.Request.Context(), &core.ControlRequest{Action: route.Action, OperationID: c.Param("oid"), EffectID: c.Param("eid"), TicketID: c.Param("ticket"), Body: body, Service: service, Identity: user})
 			}

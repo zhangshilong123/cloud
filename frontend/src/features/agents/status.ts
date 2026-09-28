@@ -1,8 +1,7 @@
-import type { Agent } from '@/mocks/data/types'
+import type { AgentStatus } from '@/api/generated.schemas'
 
-export const AGENT_STATUS_LABELS: Record<Agent['status'], string> = {
-  online: '在线',
-  busy: '忙碌',
-  idle: '空闲',
-  offline: '离线',
+/** Product labels for the cloud Agent lifecycle (`active`/`disabled`). */
+export const AGENT_STATUS_LABELS: Record<AgentStatus, string> = {
+  active: '已启用',
+  disabled: '已禁用',
 }

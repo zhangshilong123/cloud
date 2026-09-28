@@ -11,10 +11,10 @@ func itoa(n int) string { return strconv.Itoa(n) }
 
 // PublicRequest is populated only after service and final-user credentials are verified.
 type PublicRequest struct {
-	Method, Path, TenantID, ProjectID, WorkspaceID, SpaceID, OperationID, CloneID, UserID, IssueID, CommentID, LabelID, StatusID, ViewID, RunID, ContextRefID, InteractionID, FormRef, AgentID, SkillID, Key, After, Query, GroupBy string
-	Limit                                                                                                                                                                                                                           int
-	Body                                                                                                                                                                                                                            Object
-	Identity                                                                                                                                                                                                                        *Claims
+	Method, Path, TenantID, ProjectID, WorkspaceID, SpaceID, OperationID, CloneID, UserID, IssueID, CommentID, LabelID, StatusID, ViewID, RunID, ContextRefID, InteractionID, FormRef, AgentID, SkillID, ExecutionID, Key, After, Query, GroupBy string
+	Limit                                                                                                                                                                                                                                        int
+	Body                                                                                                                                                                                                                                         Object
+	Identity                                                                                                                                                                                                                                     *Claims
 }
 
 // Public executes one authorized public request in a short database transaction.
@@ -87,6 +87,8 @@ func (s *Store) Public(ctx context.Context, r *PublicRequest) (Object, int, erro
 			out = archiveAgent(t, r, uid)
 		case r.SpaceID != "" && strings.HasSuffix(r.Path, "/agents") && r.Method == "POST":
 			out = createAgent(t, r, uid)
+		case r.SpaceID != "" && strings.HasSuffix(r.Path, "/executions") && r.Method == "POST":
+			out = admitExecutionPublic(t, r, uid)
 		case r.SpaceID != "" && r.Method == "PATCH":
 			out = patchSpace(t, r, uid)
 			events = append(events, SpaceEvent{Type: "space.updated", SpaceID: r.SpaceID, Version: out.N("version")})
@@ -352,6 +354,12 @@ func readPublic(t *transaction, r *PublicRequest, uid string) Object {
 			return getAgent(t, r, uid)
 		case strings.HasSuffix(r.Path, "/agents"):
 			return listAgents(t, r, uid)
+		case r.SkillID != "":
+			return getSkill(t, r, uid)
+		case strings.HasSuffix(r.Path, "/skills"):
+			return listSkills(t, r, uid)
+		case r.ExecutionID != "":
+			return getExecution(t, r, uid)
 		default:
 			spaceMember(t, r.SpaceID, uid)
 			return t.one("SELECT * FROM collab_workspaces WHERE id=$1", r.SpaceID)

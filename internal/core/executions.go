@@ -173,3 +173,25 @@ func executionRecord(t *transaction, executionID string) Object {
 		"skillBindings": skillBundles(t, executionID),
 	}
 }
+
+// admitExecutionPublic is the public-router admission seam: it reads agent_id from the validated
+// request body (the allowlist permits only agentId) and delegates to the Phase 5 authority, which
+// re-authorizes the caller and resolves the frozen Skill set server-side. The generic public
+// idempotency envelope already deduplicates the request, so a browser retry replays the cached
+// Execution rather than creating a second one (Execution public admission idempotency contract).
+func admitExecutionPublic(t *transaction, r *PublicRequest, uid string) Object {
+	agentID := r.Body.S("agentId")
+	require(validID(agentID), 404, "not_found")
+	return admitExecution(t, uid, r.SpaceID, agentID, nil)
+}
+
+// getExecution reads a frozen Execution aggregate by id, scoped to the caller's Collaboration
+// Workspace. The workspace gate runs before executionRecord so a member of one workspace can never
+// read another workspace's Execution (no existence leak, D11).
+func getExecution(t *transaction, r *PublicRequest, uid string) Object {
+	agentSpace(t, r.SpaceID, uid, false)
+	require(validID(r.ExecutionID), 404, "not_found")
+	ws := t.one("SELECT workspace_id FROM executions WHERE execution_id=$1", r.ExecutionID)
+	require(ws != nil && ws.S("workspaceId") == r.SpaceID, 404, "not_found")
+	return executionRecord(t, r.ExecutionID)
+}

@@ -19,6 +19,7 @@ import { RepositoriesPage } from '@/features/clones/repositories-page'
 import { RuntimesPage } from '@/features/runtimes/runtimes-page'
 import { GeneralSettingsPage } from '@/features/settings/general-settings-page'
 import { SettingsLayout } from '@/features/settings/settings-layout'
+import { SkillDetailPage } from '@/features/skills/skill-detail-page'
 import { SkillsPage } from '@/features/skills/skills-page'
 import { SquadDetailPage } from '@/features/squads/squad-detail-page'
 import { SquadsPage } from '@/features/squads/squads-page'
@@ -88,6 +89,7 @@ export const router = createBrowserRouter([
       { path: 'agents', element: <WithSlug component={AgentsPage} /> },
       { path: 'agents/:agentId', element: <WithSlug component={AgentDetailPage} /> },
       { path: 'skills', element: <WithSlug component={SkillsPage} /> },
+      { path: 'skills/:skillId', element: <WithSlug component={SkillDetailPage} /> },
       { path: 'runtimes', element: <WithSlug component={RuntimesPage} /> },
       { path: 'chat', element: <WithSlug component={ChatPage} /> },
       { path: 'chat/:sessionId', element: <WithSlug component={ChatPage} /> },

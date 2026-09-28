@@ -32,6 +32,7 @@ export function workspacePaths(slug: string) {
     squads: `${base}/squads`,
     squadDetail: (id: string) => `${base}/squads/${id}`,
     skills: `${base}/skills`,
+    skillDetail: (id: string) => `${base}/skills/${id}`,
     runtimes: `${base}/runtimes`,
     members: `${base}/settings/members`,
     billing: `${base}/settings/billing`,

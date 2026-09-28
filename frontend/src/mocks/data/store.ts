@@ -9,7 +9,6 @@ import {
   members,
   projects,
   runtimes,
-  skills,
   squads,
   users,
   workspaces,
@@ -50,7 +49,6 @@ export const db = {
   chatSessions: asNonEmpty([...chatSessions], 'chat sessions'),
   chatMessages: [...chatMessages],
   inboxItems: asNonEmpty([...inboxItems], 'inbox items'),
-  skills: asNonEmpty([...skills], 'skills'),
   runtimes: asNonEmpty([...runtimes], 'runtimes'),
   invoices: asNonEmpty([...invoices], 'invoices'),
 }

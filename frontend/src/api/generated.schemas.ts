@@ -154,6 +154,39 @@ export interface AssistSuggestion {
   suggestedValues: AssistSuggestionSuggestedValues;
 }
 
+/**
+ * @nullable
+ */
+export type AttemptResult = { [key: string]: unknown } | null;
+
+export type AttemptState = typeof AttemptState[keyof typeof AttemptState];
+
+
+export const AttemptState = {
+  eligible: 'eligible',
+  dispatched: 'dispatched',
+  running: 'running',
+  succeeded: 'succeeded',
+  failed: 'failed',
+  canceled: 'canceled',
+  superseded: 'superseded',
+} as const;
+
+export interface Attempt {
+  attemptId: string;
+  createdAt: string;
+  /** @nullable */
+  dispatchedEpoch: number | null;
+  executionId: string;
+  /** @nullable */
+  nodeId: string | null;
+  ordinal: number;
+  /** @nullable */
+  result: AttemptResult;
+  state: AttemptState;
+  updatedAt: string;
+}
+
 export type CloneStateKind = typeof CloneStateKind[keyof typeof CloneStateKind];
 
 
@@ -386,6 +419,36 @@ export interface Error {
   code: string;
   params: ErrorParams;
   requestId: string;
+}
+
+export type ExecutionInput = { [key: string]: unknown };
+
+export interface Execution {
+  actorUserId: string;
+  agentId: string;
+  createdAt: string;
+  executionId: string;
+  input: ExecutionInput;
+  tenantId: string;
+  workspaceId: string;
+}
+
+export interface ExecutionSkillBinding {
+  canonicalName: string;
+  contentDigest: string;
+  createdAt: string;
+  executionId: string;
+  packageFormat: string;
+  packageFormatVersion: number;
+  sizeBytes: number;
+  skillId: string;
+  skillRevisionId: string;
+}
+
+export interface ExecutionRecord {
+  attempts: Attempt[];
+  execution: Execution;
+  skillBindings: ExecutionSkillBinding[];
 }
 
 export interface FormOption {
@@ -841,6 +904,26 @@ export interface Sandbox {
   substrateSandboxId: string | null;
   /** @nullable */
   terminatedAt: string | null;
+  version: number;
+  workspaceId: string;
+}
+
+export interface SkillRevision {
+  contentDigest: string;
+  id: string;
+  packageFormat: string;
+  packageFormatVersion: number;
+  sizeBytes: number;
+}
+
+export interface Skill {
+  canonicalName: string;
+  createdAt: string;
+  currentRevision: SkillRevision | null;
+  displayName: string;
+  id: string;
+  summary: string;
+  updatedAt: string;
   version: number;
   workspaceId: string;
 }
@@ -1892,6 +1975,10 @@ export type PutApiV1TenantsTidSpacesSpaceIdAgentsAgentIdSkillsSkillIdBody = {
   version?: number;
 };
 
+export type PostApiV1TenantsTidSpacesSpaceIdExecutionsBody = {
+  agentId: string;
+};
+
 export type GetApiV1TenantsTidSpacesSpaceIdMembersParams = {
 /**
  * @minimum 1
@@ -1970,6 +2057,23 @@ export type PostApiV1TenantsTidSpacesSpaceIdProjects202 = {
   operation: Operation;
   resource: Project;
   workspace: Workspace;
+};
+
+export type GetApiV1TenantsTidSpacesSpaceIdSkillsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * Exclusive UUID cursor, ascending stable ordering.
+ */
+after?: string;
+};
+
+export type GetApiV1TenantsTidSpacesSpaceIdSkills200 = {
+  items: Skill[];
+  nextCursor: string;
 };
 
 export type PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind = typeof PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind[keyof typeof PostApiV1TenantsTidSpacesSpaceIdSkillsImportsBodySourceKind];
