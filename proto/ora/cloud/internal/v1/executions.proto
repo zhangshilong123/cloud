@@ -55,12 +55,26 @@ message CloneSpec {
 // ADR D4 / plan §17.1). It mirrors the immutable ExecutionSkillBinding content identity so the
 // Controller and Node never re-resolve mutable Skill state. The retrieval capability is a separate
 // later layer and deliberately not carried here.
+//
+// Phase 6A.1 (Skill Delivery Metadata Plumbing) added the delivery integrity metadata that drives
+// the Node's required byte-verification chain: `digest_algorithm` (the *content/tree* digest
+// algorithm, consistent with skill_revisions.digest_algorithm), plus the exact physical package
+// byte digest (`package_digest`) and its own algorithm. These are additive fields — 6/7/8 — and
+// existing fields are never renumbered. `object_locator` intentionally stays internal and is NOT
+// carried here (§18).
 message SkillBundleRef {
   string skill_revision_id = 1;
   string content_digest = 2;
   int64 size_bytes = 3;
   string package_format = 4;
   int32 package_format_version = 5;
+  // Content/tree digest algorithm of `content_digest` (e.g. "sha256").
+  string digest_algorithm = 6;
+  // Byte-level SHA-256 identity of the exact ora-skill-package container. NOT the cache key — that
+  // is (digest_algorithm, content_digest); this is the byte-verification expectation only.
+  string package_digest = 7;
+  // Digest algorithm for `package_digest` (e.g. "sha256").
+  string package_digest_algorithm = 8;
 }
 
 // A skill-bearing execution kind: the exact frozen Skill revisions an Agent execution runs with.

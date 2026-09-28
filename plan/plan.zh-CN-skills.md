@@ -2067,6 +2067,191 @@ snapshot 是后续 capability 签发唯一被授权的依据。
       （授权、terminal fencing、storage_not_configured、invalid_locator、无持久化、refresh 保持 revision）。
 - [ ] Node downloader/cache、Controller relay（不代理/不选 revision）、READY barrier —— 后续阶段。
 
+### Phase 6A.0 —— Skill Delivery 契约闭合 —— DONE
+
+状态：**DONE（2026-09-28 闭合）** —— 一次性契约闭合步骤：在任何 Phase 6A runtime 代码（downloader/cache/
+materialization/READY）之前，冻结两个尚未闭合的 delivery 契约。先审计实际代码/schema/proto，选择最小设计，
+更新 plan + ADR，运行既有测试证明当前假设，然后 **STOP**。不实现 runtime、不做任何 git commit/push/merge/
+rebase/cherry-pick。
+
+**Problem A —— 可信的期望 `package_digest` 交付。** 完整性链条要求 Node 在 cache publish 前同时校验
+`SHA256(package bytes) == expected package_digest` **且** `TreeDigest(decoded) == expected content_digest`
+（两条都必需，§6）。现状审计发现权威缺口：
+- `skill_revisions` 持久化了 `digest_algorithm` 与 `object_locator`，但**没有 `package_digest` 列**
+  （`0015_skills.sql`）；`package_digest` 只能靠解析 `object_locator` key 恢复 —— 而 §7 禁止把 object-key
+  解析作为权威来源。
+- 冻结快照同样不含它：`execution_skill_bindings` 有 `content_digest, size_bytes, package_format(_version)`
+  但**无 `package_digest`、无 `digest_algorithm`**（`0018_execution_snapshot.sql`），`admitExecution`
+  （`internal/core/executions.go`）两者都不冻结。
+- dispatch descriptor `SkillBundleRef`（proto `internal/controlpb/executions.pb.go`）携带
+  `skill_revision_id, content_digest, size_bytes, package_format, package_format_version` —— **无
+  `digest_algorithm`、无 `package_digest`**。Node 因此无法做 §6 第 1 步字节校验，也无法构造 D2 的 cache
+  identity `digest_algorithm + content_digest`（只能硬编码 `sha256`）。
+- mint 响应（`RetrievedCapability` / `SkillRetrievalCapability`）只带 `skill_revision_id, method, url,
+  expires_at` —— 无任何 digest。
+
+**选定（Option A）：immutable revision 是权威；冻结快照与 dispatch descriptor 携带期望字节 digest。**
+新增持久列 `skill_revisions.package_digest`（由 ingestion saga 在 revision 创建时写入，取自已经算好的
+digest，而非 key 解析）作为原子权威；`execution_skill_bindings` 在 admission 时去规范化
+`digest_algorithm` + `package_digest`；`SkillBundleRef` 增加累加式 `digest_algorithm` + `package_digest`
+字段。这需要一个 forward migration（`0019_*`）+ 累加式 proto 字段，满足 §10（immutable 权威、不重算
+current revision、cache publish 前有可信精确字节 digest、retry/refresh/新 Attempt 都保持同一冻结 artifact、
+不持久化 signed URL、不以 locator 充当域身份）。
+
+**否决 Option B**（只在 capability mint 响应里带 `package_digest`）：把可信字节期望耦合到临时、per-Attempt
+的 mint/refresh 往返，而非冻结快照；且其唯一免 migration 的来源是 object-key 解析（§7 禁止），除非仍加
+`package_digest` 持久列 —— 那样不如直接去规范化进冻结 binding，让 Node 不必依赖一次在线的 mint 就能开始
+字节校验。
+
+**Problem B —— Node immutable cache identity。** 已批准的材料化 ADR（`specs/decisions/node/agent-runtime/
+0-skill-materialization-and-readiness.md`，D2）冻结 `cache identity = digest_algorithm + content_digest`，
+Cloud plan §20 一致。spec §13 的 `package_digest` 偏好是**以 cache 存储“精确 package bytes”为前提**的。
+本闭合把它定死为：**V1 cache 存储 decode 后的 verified canonical tree**（`VerifiedSkillBundle`，
+即 `AgentRuntimeAdapter`/projection 消费的产物），不是原始 package archive。因此正确 cache key 是
+`content_digest`（decoded logical-tree identity）—— 与已批准 D2 一致，故**不存在需要改 ADR 的冲突**。
+`package_digest` 保留其独立角色（§14）：cache **population** 期间的可信字节校验目标（并作为 entry 元数据），
+永不当 cache key。注：object storage ADR D4 已言明 `package_digest` 不是 Node cache key；本闭合确认之，
+并把材料化 ADR 开放问题 #2 落定为“expanded verified tree”。
+
+**本步骤非目标：** downloader 实现；Node cache 实现；projection 实现；READY 实现；进程 spawn；Controller
+dispatch 实现；Node runtime 实现。以上都留到后续 Phase 6A/6B 切片。
+
+### Phase 6A.1 —— Skill Delivery 元数据管线 —— DONE
+
+状态：**DONE** —— 实现 Phase 6A.0 已批准的 **Cloud 侧 durable/transport 契约**。为 `skill_revisions` 增加
+durable `package_digest` 权威，把完整 delivery digest 元数据（content + package）冻结进
+`execution_skill_bindings`，并通过 `SkillBundleRef` 加性字段传输。Runtime（downloader/cache/decode/projection/
+READY/dispatch）仍 NOT implemented。
+
+已冻结决策（Phase 6A.0，已批准）：`SkillRevision` 拥有权威不可变 `package_digest`；admission 快照
+`digest_algorithm`、`content_digest`、`package_digest`、package format/version、size；`SkillBundleRef` 传输冻结的
+delivery 元数据；Node V1 cache 存 verified expanded canonical tree；Node cache identity =（`digest_algorithm`,
+`content_digest`）；`package_digest` 只是字节级完整性期望，永不当 cache key；`content_digest` 是 decoded 逻辑树
+身份与 cache 身份。
+
+**范围：**
+- durable `skill_revisions.package_digest` + `package_digest_algorithm`（content `digest_algorithm` 仍表示逻辑树
+  digest 算法；package digest 用独立的显式列，两层永不混同）；
+- 执行快照在 `execution_skill_bindings` 冻结 delivery digest 元数据；
+- `SkillBundleRef` 加性 proto 字段（`digest_algorithm`、`package_digest`、`package_digest_algorithm`），区分
+  content-digest 算法与 package-digest 算法；
+- migrations、core snapshot、proto/contract、tests、docs。
+
+**非目标（本步骤）：** Node downloader、Node cache、Rust codec、projection、READY、process spawn、完整
+Controller dispatch。`RetrievalCapability` 仍是临时 exact-object bearer 权限 —— `SkillBundleRef` 变更不把它变成
+digest 权威（冻结的 BundleRef 才是权威）。
+
+### Phase 6A.2 —— Canonical Package Codec + Verified Immutable Cache —— SUPERSEDED（目标已纠正）
+
+状态：**SUPERSEDED —— 在 runtime 实现前纠正了架构目标。** 首次 6A.2 尝试假定 **Desktop/Node（Rust）** 为生产
+Skill runtime，并因两道门（§32 跨仓库 proto、§43 缺 Rust 工具链）BLOCKED。该尝试 **并非 DONE**：它被取代，因为
+**`desktop/` 与 `multica/` 仅是参考实现，不是生产 Ora Cloud Skills runtime。** Ora 产品是 Web/服务端。下方正确小节
+（"— Web Runtime Skill Materialization Architecture Closure"）从代码重审实际 Cloud runtime，并为每项 Skill
+materialization 责任冻结服务端 owner，独立于 Desktop/Rust。
+
+### Phase 6A.2 —— Web Runtime Skill Materialization Architecture Closure —— DONE
+
+状态：**DONE** —— 架构/归属 **closure 完成**。服务端 Web runtime 对 Skill delivery/materialization 的 owner 已
+冻结并记录：生产 runtime = Cloud 服务端 Go；codec owner = Go `cloud/internal/skillpkg`（已修订 D36）；
+RetrievalCapability producer = Cloud `s3store` issuer，consumer = 服务端 runtime；cache/projection/README/spawn
+owner = 服务端 runtime；Controller = orchestration-only（绝不 byte-proxy）。记录见
+`specs/decisions/cloud/skills/20260928-web-runtime-skill-materialization-ownership.md`（`approved`）及
+`specs/test-cases/cloud/skills/` 镜像。`desktop/`/`multica/` 仍仅作参考。
+
+冻结原则：**migrate capability，not architecture。** `desktop/`/`multica/` 仅作参考；生产 Skills runtime 是
+服务端 Web 基础设施。
+
+### Phase 6A.3 —— Server-side Skill Retrieval + Verification + Verified Cache —— DONE
+
+状态：**DONE** —— 实现已冻结的服务端 materialization runtime：消费 RetrievalCapability → 有界 package
+下载 → `package_digest` 校验 → 经 `internal/skillpkg` 做 canonical decode → `content_digest` 校验 → verified
+immutable cache（identity `(digest_algorithm, content_digest)`，staging → atomic publish）。**不做** Attempt
+projection、runtime/provider 布局、READY barrier、Agent spawn、Controller dispatch loop。
+
+owner package 边界（§3 审计）：仓库中尚不存在生产 Node/agent runtime 进程；materialization 副作用（下载/校验/
+decode/缓存）属服务端 derived-state，**不属于** `internal/simulator`（dev 替身）、`frontend`/`desktop`（仅参考）、
+`internal/controlgrpc`（transport）或 `internal/core`（DB 事务代码）。新建最小生产向包：
+**`internal/skillruntime`** —— 纯 runtime，仅依赖 `internal/skillpkg`（codec）+ `internal/skillstore`
+（RetrievalCapability 类型、`AlgorithmSHA256`）；无 DB、无 config 导入、无进程 spawn。经新 `runtime` 配置段
+（cache root + retrieval timeouts）装配进 `Store.SkillMaterializer` 作为 6B dispatch seam。
+
+范围：`internal/skillruntime`（Config / `FrozenSkillBundle` 输入 / `VerifiedSkillBundle` 输出 / `EnsureVerified`；
+有界 fail-closed HTTP client；typed error taxonomy；verified immutable cache 含 staging + atomic rename publish +
+`.complete` marker + corruption fail-closed）；`runtime` 配置段（`skill_cache_root`、
+`retrieval.connect_timeout`/`request_timeout`）；`Store.SkillMaterializer` seam；单测（retrieval / integrity /
+cache / concurrency / immutable tree）；双语 README。
+
+非目标：Attempt projection；`AgentRuntimeAdapter`；READY barrier；Agent/容器 spawn；完整 Controller
+dispatch/claim/recovery loop；cache GC service（bounded GC 已由 6A.4 交付）。
+
+已交付：`internal/skillruntime`（retrieval/fetch/cache/verify + errors）、`runtime` 配置段、
+`Store.SkillMaterializer` seam、`cmd/server` 装配、12 组单测、双语 README；ADR
+`20260928-server-side-skill-retrieval-verification-cache.md`（`implemented`）+ mirror test-case。门禁：
+`go build ./...`、`go vet ./...`、`gofmt`、`git diff --check` 全通过。
+
+### Phase 6A.4 —— Attempt Projection + Runtime Adapter + READY / Spawn Gate —— DONE
+
+状态：**DONE** —— 延伸已冻结的 `verified immutable cache → Attempt-scoped projection → runtime/provider
+adapter → READY 屏障 → spawn gate（抽象）→ cleanup/bounded GC` 链，全部落在 `internal/skillruntime`。明确
+**不做**完整 Controller dispatch/recovery 循环、**不**新设 daemon/进程架构（两者仍留 6B）。继承 Node
+materialization 行为契约（D10–D26 / D33 / D41，落到服务端文件系统）。
+
+AUDIT 结论（§5）：无生产 Node/agent runtime 进程（`internal/simulator` = dev 替身、`internal/core/control.go`
+= 纯 DB 编排）——因此不发明 daemon。runtime 只读已校验的 immutable cache（copy，绝不可写 hardlink）并发布
+Attempt-scoped projection 到 `<attempt_root>/attempts/<attempt_id>/`（staging → 单次原子 rename）。READY 是显式
+marker + 校验步骤（`Project`→`PreparedAttempt`、`Ready`→`ReadyAttempt`）；spawn 在类型级闸门
+（`SpawnGate.Open(ReadyAttempt)`）。projection cleanup 幂等且只清自己拥有的；cache GC bounded（age + oldest-first
+count）且独立于 projection。
+
+范围：`internal/skillruntime`（`projection.go` / `adapter.go`（`AgentRuntimeAdapter` + `FSAdapter`）/ `gate.go`
+（`SpawnGate` + `LaunchSpec`）/ `cleanup.go`（`CleanupAttempt` / `CollectStaging` / `Materializer.Collect`）+
+`errors.go` 五个新 sentinel）；`runtime.skill_attempt_root` 配置键（有 `runtime` 则必填）；`Store.SkillProjector`
+seam；14 组单测；双语 README 增补；ADR
+`20260928-attempt-projection-runtime-adapter-ready-spawn-gate.md`（`implemented`）+ mirror test-case。
+
+非目标：进程/容器 spawn；provider 原生 discovery 布局（Codex/Claude/…）；optional Skills；Controller
+dispatch/claim/recovery（6B）。
+
+已交付：`internal/skillruntime` projection/adapter/gate/cleanup、`runtime.skill_attempt_root` 配置段、
+`Store.SkillProjector` seam、`cmd/server` 装配、14 组单测、双语 README；ADR
+`20260928-attempt-projection-runtime-adapter-ready-spawn-gate.md`（`implemented`）+ mirror test-case。门禁：
+`go build ./...`、`go vet ./...`、`gofmt`、`git diff --check` 全通过。
+
+### Phase 6B.1 —— Controller ↔ Runtime Dispatch + Attempt Lifecycle Integration —— DONE
+
+状态：**implemented** —— 把 Controller claim/dispatch 接到服务端 Skill runtime 准备上，并安全/可恢复地推进
+Attempt 状态，延伸已冻结链 `Execution admission → … → EnsureVerified → verified cache → Project → Ready →
+SpawnGate.Open → LaunchSpec`。干净地停在 `LaunchSpec`（无生产进程/daemon 存在）、绝不持久化签名 URL、只使用
+冻结 `ExecutionSkillBinding`（不重解析可变 Skill）。
+
+已交付：`internal/core/attempt.go`（五个 Controller-role Control actions —— `attempt_pending`/`attempt_get`/
+`attempt_claim`/`attempt_dispatch`/`attempt_result` —— 加上 `Store.PrepareAttempt` 编排）、`control.go` 分支接入
+（恢复读在 lease 前、其余状态变更 `attempt_*` 在 `leaseValid` 后，镜像 `clone.go`）、`store.go` 加性 seam
+`SkillReadiness` + `SkillSpawnGate`、`cmd/server` 装配。测试：`integration/attempt_dispatch_test.go` —— 13 个测试
+覆盖 11 个 mirror 锚点 + capability 有界重铸 + 多 Skill 全有或全无。门禁：`gofmt`、`go vet ./...`、
+`go build ./...` 全通过；integration 套件对真实 PostgreSQL 全绿（仅无关的 `cmd/devsetup` Windows 文件权限测试
+为 PRE-EXISTING）。ADR `20260928-controller-attempt-dispatch-preparation.md`（`implemented`）+ mirror test-case
+已回填实际测试名。
+
+**编排归属**（`internal/core`，镜像 `clone.go`）：claim/dispatch/result 循环是 Controller-role Control actions，
+落在 Attempt 自己的耐久列上（`node_id` / `dispatched_epoch` / `result`）；**不改** `operations`/`external_effects`
+schema。**Effect 边界** = attempt dispatch 行本身（稳定身份 = `attempt_id`，在任何 external IO 之前落库）。
+
+**Attempt 状态迁移**（既有枚举，不加状态值）：`eligible → dispatched`（dispatch 落 `node_id` + `dispatched_epoch`）；
+`dispatched → running`（准备成功 → projection READY → `LaunchSpec` 可取）；`dispatched → failed`（永久准备失败）。
+此处 `running` = "the Attempt has completed the fenced dispatch/preparation handoff and is ready for, or has
+entered, runtime execution"（非「进程 OS exec」证据）；真正进程消费 `LaunchSpec` 是后续（Phase 2）关注点。
+
+**Runtime 准备**是服务端编排 seam `Store.PrepareAttempt(ctx, executionID, attemptID)`（非 Control action ——
+external IO 绝不在 DB 事务内）：读冻结绑定 → `MintSkillRetrievalCapabilities`（ephemeral，不持久化）→ 逐 Skill
+`EnsureVerified` → `Project` → `Ready` → `SpawnGate.Open` → 返回 `LaunchSpec`。耐久 `attempt_result` Control action
+再只记录 `{attempt_id, prepared}` + 稳定错误码（无 runtime 路径、无 URL/signature）。
+
+**恢复/幂等**：submission 幂等 + epoch fencing（clone 模型）；`Project` 复用既有有效投影、`EnsureVerified` 命中
+verified cache，故重试收敛。transient 失败保持 `dispatched`；永久完整性问题 fail closed。
+
+非目标：进程/容器 spawn、provider 原生布局、byte-proxy、任何新 runtime service/RPC、新 durable Attempt 状态。
+
 ### Phase 6A —— Node Skill retrieval & immutable cache：runtime 前置已解决、设计契约已闭合；实现 BLOCKED
 
 状态：**设计契约已闭合；实现尚未开始（被阻塞）**。Phase 6A 打通 Controller → Node 的 Skill delivery

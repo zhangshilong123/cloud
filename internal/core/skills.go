@@ -444,18 +444,30 @@ func resolveSkill(t *transaction, workspaceID, targetSkillID string, cand *skill
 }
 
 // resolveRevision returns the immutable SkillRevision for this candidate, reusing an identical
-// (skill_id, digest_algorithm, content_digest) row or inserting a new one (D18).
+// (skill_id, digest_algorithm, content_digest) row or inserting a new one (D18). Since Phase 6A.1 it
+// also persists and audits the trusted physical package_digest (§5/§6).
+//
+// §6 (revision reuse): content_digest alone does not prove the exact physical container bytes —
+// two package encodings can decode to the same logical tree — so the durable package_digest is the
+// byte-equivalence proof. Reuse is therefore allowed only when the existing row's package_digest is
+// populated and equals the candidate's; a NULL legacy digest (pre-0019) or any mismatch stops the
+// ingestion rather than silently writing a potentially different physical digest into the immutable
+// historical row, re-serving unverifiable bytes, or freezing stale metadata.
 func resolveRevision(t *transaction, skillID, actorID string, cand *skillCandidate) Object {
 	if existing := t.one("SELECT * FROM skill_revisions WHERE skill_id=$1 AND digest_algorithm=$2 AND content_digest=$3",
 		skillID, skillstore.AlgorithmSHA256, cand.contentDigest); existing != nil {
+		require(existing.S("packageDigest") != "" && existing.S("packageDigest") == cand.packageDigest,
+			409, "revision_delivery_conflict")
 		return existing
 	}
 	id := newID()
 	t.exec(`INSERT INTO skill_revisions(id, skill_id, content_digest, digest_algorithm, size_bytes, file_count,
-		package_format, package_format_version, object_locator, package_name, package_description, created_by)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		package_format, package_format_version, package_digest, package_digest_algorithm,
+		object_locator, package_name, package_description, created_by)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		id, skillID, cand.contentDigest, skillstore.AlgorithmSHA256, cand.sizeBytes, cand.fileCount,
-		skillpkg.FormatName, skillpkg.FormatVersion, cand.locator.String(), cand.packageName, cand.packageDescription, actorID)
+		skillpkg.FormatName, skillpkg.FormatVersion, cand.packageDigest, skillstore.AlgorithmSHA256,
+		cand.locator.String(), cand.packageName, cand.packageDescription, actorID)
 	return t.one("SELECT * FROM skill_revisions WHERE id=$1", id)
 }
 

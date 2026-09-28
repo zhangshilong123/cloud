@@ -39,12 +39,18 @@ func (s *Store) Control(ctx context.Context, r *ControlRequest) (Object, error) 
 		if r.Action == "clone_get" || r.Action == "clone_pending" {
 			return cloneCommand(t, r)
 		}
+		if r.Action == "attempt_get" || r.Action == "attempt_pending" {
+			return attemptCommand(t, r)
+		}
 		leaseValid(t, r)
 		if r.Action == "claim" {
 			return claim(t, r)
 		}
 		if isCloneAction(r.Action) {
 			return cloneCommand(t, r)
+		}
+		if isAttemptAction(r.Action) {
+			return attemptCommand(t, r)
 		}
 		o := operation(t, r)
 		switch r.Action {

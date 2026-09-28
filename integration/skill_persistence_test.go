@@ -79,6 +79,20 @@ func insertSkill(t *testing.T, pool *sql.DB, ws, canonicalName, user string) str
 func insertRevision(t *testing.T, pool *sql.DB, skillID, digest, user string) string {
 	t.Helper()
 	id := uuid.NewString()
+	// Since Phase 6A.1 new writes carry the trusted delivery package_digest + its algorithm (plus the
+	// content digest_algorithm) alongside the immutable content digest; the migration keeps these
+	// nullable for legacy rows, but the core admission path fails closed when they are absent.
+	execOK(t, pool, `INSERT INTO skill_revisions(id,skill_id,digest_algorithm,content_digest,package_digest,package_digest_algorithm,size_bytes,file_count,created_by)
+		VALUES($1,$2,'sha256',$3,$3,'sha256',1024,2,$4)`,
+		id, skillID, digest, user)
+	return id
+}
+
+// insertRevisionLegacy inserts a pre-0019 SkillRevision row with no durable package digest (the
+// legacy rollout case) so the fail-closed admission path can be pinned.
+func insertRevisionLegacy(t *testing.T, pool *sql.DB, skillID, digest, user string) string {
+	t.Helper()
+	id := uuid.NewString()
 	execOK(t, pool, `INSERT INTO skill_revisions(id,skill_id,content_digest,size_bytes,file_count,created_by) VALUES($1,$2,$3,1024,2,$4)`,
 		id, skillID, digest, user)
 	return id

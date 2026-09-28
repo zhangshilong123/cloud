@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/wanglongan587/cloud/internal/skillruntime"
 	"github.com/wanglongan587/cloud/internal/skillstore"
 )
 
@@ -111,6 +112,64 @@ type Store struct {
 	// maximum 900s. It is wired from the storage configuration; zero falls back to the default in the
 	// mint path.
 	RetrievalCapabilityTTL time.Duration
+
+	// SkillMaterializer is the server-side Skill materialization seam (6A.3): it turns an
+	// already-frozen Skill bundle plus a short-lived RetrievalCapability into a verified immutable
+	// cache entry. It is nil by default ("Unavailable"); cmd/server wires the production
+	// internal/skillruntime implementation from the `runtime` config section. It owns no database work
+	// and performs no mutable Skill lookup (its input is frozen metadata + a caller-supplied bearer
+	// capability).
+	SkillMaterializer SkillMaterializer
+
+	// SkillProjector is the server-side Attempt projection seam (6A.4): it turns an Attempt identity
+	// plus its ordered frozen + verified Skills into an Attempt-scoped projection, atomically published
+	// and READY. It is nil by default ("Unavailable"); cmd/server wires the production
+	// internal/skillruntime implementation from the `runtime` config section. It copies from the
+	// verified cache (never mutating it), never resolves mutable Skill state, and never executes
+	// package content.
+	SkillProjector SkillProjector
+
+	// SkillReadiness is the server-side READY-barrier seam (6B.1): it validates a published Attempt
+	// projection's ownership/READY marker and returns a ReadyAttempt (the only value the spawn seam
+	// accepts). It is nil by default ("Unavailable"); cmd/server wires *skillruntime.Projector (the
+	// same value that serves SkillProjector), never a separate filesystem owner.
+	SkillReadiness SkillReadiness
+
+	// SkillSpawnGate is the server-side preparation→spawn seam (6B.1): it assembles the provider-neutral
+	// LaunchSpec from a ReadyAttempt. It is nil by default ("Unavailable"); cmd/server wires
+	// *skillruntime.SpawnGate. It performs no process spawn and no byte-proxy.
+	SkillSpawnGate SkillSpawnGate
+}
+
+// SkillMaterializer is the internal interface the (future) dispatch slice consumes to obtain a verified
+// immutable Skill tree (6A.3, plan §36). The concrete *skillruntime.Materializer implements it; a
+// future test double can substitute it without touching the download/cache effects.
+type SkillMaterializer interface {
+	EnsureVerified(ctx context.Context, bundle skillruntime.FrozenSkillBundle, capability skillstore.RetrievalCapability) (*skillruntime.VerifiedSkillBundle, error)
+}
+
+// SkillProjector is the internal interface the (future) dispatch slice consumes to build an
+// Attempt-scoped, READY Skill projection (6A.4) from already-verified cache entries. The concrete
+// *skillruntime.Projector implements it; the READY barrier and spawn gate are separate runtime steps the
+// dispatch slice composes, so this seam stays the single projection entry point.
+type SkillProjector interface {
+	Project(ctx context.Context, attemptID string, skills []skillruntime.ProjectionSkill) (*skillruntime.PreparedAttempt, error)
+}
+
+// SkillReadiness is the internal interface the dispatch slice consumes to pass a PreparedAttempt through
+// the explicit READY barrier (6B.1): it re-reads the published ownership/READY marker and attests every
+// required Skill directory, never inferring READY from partial filesystem state. The concrete
+// *skillruntime.Projector implements it (the same value that serves SkillProjector); a test double can
+// substitute it without touching the filesystem marker validation.
+type SkillReadiness interface {
+	Ready(ctx context.Context, a skillruntime.PreparedAttempt) (*skillruntime.ReadyAttempt, error)
+}
+
+// SkillSpawnGate is the internal interface the dispatch slice consumes to assemble the provider-neutral
+// spawn inputs from a ReadyAttempt (6B.1). The concrete *skillruntime.SpawnGate implements it; it is
+// type-level readiness only and performs no process spawn and no byte-proxy.
+type SkillSpawnGate interface {
+	Open(ready skillruntime.ReadyAttempt) skillruntime.LaunchSpec
 }
 
 // NewStore obtains the injected SQL pool without creating or migrating schema.

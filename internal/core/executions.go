@@ -54,14 +54,20 @@ func (s *Store) RunAgainExecution(ctx context.Context, source, subject, display,
 	})
 }
 
-// frozenBinding is the exact SkillRevision identity an Execution freezes at admission (D2).
+// frozenBinding is the exact SkillRevision identity an Execution freezes at admission (D2). Since
+// Phase 6A.1 it also carries the full delivery integrity metadata (content digest_algorithm,
+// package_digest and its algorithm) so the Node's byte-verification chain is driven from this durable
+// snapshot, never from parsing an object_locator or a mutable current lookup.
 type frozenBinding struct {
-	skillID        string
-	revisionID     string
-	contentDigest  string
-	sizeBytes      int64
-	packageFormat  string
-	packageVersion int64
+	skillID           string
+	revisionID        string
+	contentDigest     string
+	digestAlgorithm   string
+	packageDigest     string
+	packageDigestAlgo string
+	sizeBytes         int64
+	packageFormat     string
+	packageVersion    int64
 }
 
 // admitExecution runs the D3 freeze inside a caller's transaction: authorize, resolve the enabled
@@ -81,19 +87,27 @@ func admitExecution(t *transaction, uid, spaceID, agentID string, input Object) 
 
 	// Resolve each bound Skill to its exact current SkillRevision and freeze its content identity
 	// (D3 step 3). A live Skill with no activated revision fails closed (Agent ADR D4) — never a
-	// silently skipped Skill. Resolution completes before any write so a gap rolls back everything.
+	// silently skipped Skill. Since Phase 6A.1 the freeze also requires the trusted delivery
+	// package_digest: a live revision that cannot provide it (a pre-0019 legacy row with no durable
+	// digest) fails closed rather than admitting an Execution that would skip byte-verification
+	// (§9) — never parse the object_locator, never substitute content_digest. Resolution completes
+	// before any write so a gap rolls back everything.
 	frozen := make([]frozenBinding, 0, len(bindings))
 	for _, b := range bindings {
 		skillID := b.S("skillId")
 		rev := currentSkillRevision(t, skillID)
 		require(rev != nil, 409, "skill_revision_not_available")
+		require(rev.S("packageDigest") != "", 409, "revision_delivery_unavailable")
 		frozen = append(frozen, frozenBinding{
-			skillID:        skillID,
-			revisionID:     rev.S("id"),
-			contentDigest:  rev.S("contentDigest"),
-			sizeBytes:      rev.N("sizeBytes"),
-			packageFormat:  rev.S("packageFormat"),
-			packageVersion: rev.N("packageFormatVersion"),
+			skillID:           skillID,
+			revisionID:        rev.S("id"),
+			contentDigest:     rev.S("contentDigest"),
+			digestAlgorithm:   rev.S("digestAlgorithm"),
+			packageDigest:     rev.S("packageDigest"),
+			packageDigestAlgo: rev.S("packageDigestAlgorithm"),
+			sizeBytes:         rev.N("sizeBytes"),
+			packageFormat:     rev.S("packageFormat"),
+			packageVersion:    rev.N("packageFormatVersion"),
 		})
 	}
 
@@ -114,9 +128,11 @@ func admitExecution(t *transaction, uid, spaceID, agentID string, input Object) 
 	t.exec(`INSERT INTO attempts(attempt_id, execution_id, ordinal) VALUES($1,$2,1)`, attemptID, executionID)
 	for _, f := range frozen {
 		t.exec(`INSERT INTO execution_skill_bindings(execution_id, skill_id, skill_revision_id, content_digest,
+			digest_algorithm, package_digest, package_digest_algorithm,
 			size_bytes, package_format, package_format_version)
-			VALUES($1,$2,$3,$4,$5,$6,$7)`,
-			executionID, f.skillID, f.revisionID, f.contentDigest, f.sizeBytes, f.packageFormat, f.packageVersion)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			executionID, f.skillID, f.revisionID, f.contentDigest, f.digestAlgorithm,
+			f.packageDigest, f.packageDigestAlgo, f.sizeBytes, f.packageFormat, f.packageVersion)
 	}
 	return executionRecord(t, executionID)
 }
@@ -139,7 +155,8 @@ func retryAttempt(t *transaction, executionID string) Object {
 // revision through the same composite identity (id, skill_id) as skills.current_revision_id, so a
 // pointer to another Skill's revision can never resolve.
 func currentSkillRevision(t *transaction, skillID string) Object {
-	return t.one(`SELECT sr.id, sr.skill_id, sr.content_digest, sr.size_bytes,
+	return t.one(`SELECT sr.id, sr.skill_id, sr.digest_algorithm, sr.content_digest,
+			sr.package_digest, sr.package_digest_algorithm, sr.size_bytes,
 			sr.package_format, sr.package_format_version
 		FROM skills s
 		JOIN skill_revisions sr ON sr.id = s.current_revision_id AND sr.skill_id = s.id
@@ -151,7 +168,8 @@ func currentSkillRevision(t *transaction, skillID string) Object {
 // the Skill's canonical_name purely for stable ordering (D12). It reads only the immutable binding
 // table and the Skill name; it never re-resolves a current revision or re-reads AgentSkillBinding.
 func skillBundles(t *transaction, executionID string) []Object {
-	return t.list(`SELECT esb.skill_id, esb.skill_revision_id, esb.content_digest, esb.size_bytes,
+	return t.list(`SELECT esb.skill_id, esb.skill_revision_id, esb.digest_algorithm, esb.content_digest,
+			esb.package_digest, esb.package_digest_algorithm, esb.size_bytes,
 			esb.package_format, esb.package_format_version, s.canonical_name
 		FROM execution_skill_bindings esb
 		JOIN skills s ON s.id=esb.skill_id

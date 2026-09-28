@@ -1862,6 +1862,209 @@ credential logging (redacted `String()` + class-only fault messages).
       invalid_locator, no-persistence, refresh-preserves-revision).
 - [ ] Node downloader/cache, Controller relay (no proxy/select), READY barrier — later phases.
 
+### Phase 6A.0 — Skill Delivery Contract Closure — DONE
+
+Status: **DONE (closed 2026-09-28)** — a contract-closure step that froze two unresolved delivery contracts
+**before** any Phase 6A runtime code (downloader/cache/materialization/READY). It audits the actual
+code/schema/proto, selects the smallest design, updates plan + ADR, runs existing tests to prove current
+assumptions, and STOPS. No runtime implementation, no git commit/push/merge/rebase/cherry-pick.
+
+**Problem A — trusted expected `package_digest` delivery.** The integrity chain requires Node to verify
+`SHA256(package bytes) == expected package_digest` **and** `TreeDigest(decoded) == expected content_digest`
+before cache publish (both checks, §6). Actual-state audit found an authority gap:
+- `skill_revisions` persists `digest_algorithm` and `object_locator` but **no `package_digest` column**
+  (`0015_skills.sql`). `package_digest` is only recoverable by parsing the `object_locator` key — and §7
+  forbids object-key parsing as the authority.
+- the frozen snapshot does not carry it either: `execution_skill_bindings` has
+  `content_digest, size_bytes, package_format(_version)` but **no `package_digest`, no `digest_algorithm`**
+  (`0018_execution_snapshot.sql`), and `admitExecution` (`internal/core/executions.go`) freezes neither.
+- the dispatch descriptor `SkillBundleRef` (proto `internal/controlpb/executions.pb.go`) carries
+  `skill_revision_id, content_digest, size_bytes, package_format, package_format_version` — **no
+  `digest_algorithm`, no `package_digest`**. Node therefore cannot perform byte-verification §6 step 1 and
+  cannot form the D2 cache identity `digest_algorithm + content_digest` (it would have to hardcode `sha256`).
+- the mint response (`RetrievedCapability` / `SkillRetrievalCapability`) carries only
+  `skill_revision_id, method, url, expires_at` — no digest.
+
+**Selected (Option A): the immutable revision is the authority; the frozen snapshot + dispatch descriptor
+carry the expected byte digest.** A durable `skill_revisions.package_digest` column (written by the
+ingestion saga at revision creation, from the already-computed digest — not key parsing) is the atomic
+authority; `execution_skill_bindings` denormalizes `digest_algorithm` + `package_digest` at admission; and
+`SkillBundleRef` gains additive `digest_algorithm` + `package_digest` fields. This is a forward migration
+(`0019_*`) + additive proto fields, satisfying §10 (immutable authority, no current-revision recompute,
+trusted exact-byte digest before cache publish, retry/refresh/new-Attempt preserve the same frozen
+artifact, no signed URL persisted, no locator-as-domain-identity).
+
+**Rejected Option B** (carry `package_digest` only in the capability mint response): it couples the trusted
+byte expectation to an ephemeral, per-Attempt mint/refresh round-trip instead of the frozen snapshot, and its
+only migration-free source is object-key parsing (forbidden by §7) unless a durable `package_digest` column
+is added anyway — in which case that column is better denormalized into the frozen binding so Node never
+depends on a live mint to begin byte verification.
+
+**Problem B — Node immutable cache identity.** The approved materialization ADR (`specs/decisions/node/
+agent-runtime/0-skill-materialization-and-readiness.md`, D2) freezes `cache identity = digest_algorithm +
+content_digest`, and Cloud plan §20 agrees. The spec §13's `package_digest` preference is explicitly
+conditional on the cache *storing exact package bytes*. **This closure resolves that the V1 cache stores the
+**decoded verified canonical tree** (`VerifiedSkillBundle`, the artifact `AgentRuntimeAdapter`/projection
+consumes), not the raw package archive.** Therefore the correct cache key is `content_digest` (the decoded
+logical-tree identity) — which matches the approved D2 — and there is **no conflict** requiring an ADR
+amendment. `package_digest` keeps its distinct role (§14): the trusted byte-verification target during
+cache *population* (and carried as entry metadata), never the cache key. Note: the object-storage
+abstraction ADR D4 already states `package_digest` is not the Node cache key; this closure confirms it and
+resolves the materialization ADR open question #2 to "expanded verified tree".
+
+**Non-goals (this step):** downloader implementation; Node cache implementation; projection implementation;
+READY implementation; process spawning; Controller dispatch implementation; Node runtime implementation.
+All remain later Phase 6A/6B slices.
+
+### Phase 6A.1 — Skill Delivery Metadata Plumbing — DONE
+
+Status: **DONE** — implements the **Cloud-side durable/transport contract** approved by Phase 6A.0. It
+adds the durable `package_digest` authority to `skill_revisions`, freezes the full delivery
+digest metadata (content + package) into `execution_skill_bindings`, and transports it additively through
+`SkillBundleRef`. Runtime (downloader/cache/decode/projection/READY/dispatch) remains NOT implemented.
+
+Frozen decisions (Phase 6A.0, approved): `SkillRevision` owns authoritative immutable `package_digest`; admission
+snapshots `digest_algorithm`, `content_digest`, `package_digest`, package format/version, size; `SkillBundleRef`
+transports the frozen delivery metadata; Node V1 cache stores the verified expanded canonical tree; Node cache
+identity = (`digest_algorithm`, `content_digest`); `package_digest` is byte-level integrity only, never the cache
+key; `content_digest` is decoded-logical-tree identity and cache identity.
+
+**Scope:**
+- durable `skill_revisions.package_digest` + `package_digest_algorithm` (content `digest_algorithm` stays the
+  logical tree-digest algorithm; package digest gets its own explicit column so the two layers never conflate);
+- execution snapshot freezes delivery digest metadata in `execution_skill_bindings`;
+- `SkillBundleRef` additive proto fields (`digest_algorithm`, `package_digest`, `package_digest_algorithm`)
+  distinguishing content-digest algorithm from package-digest algorithm;
+- migrations, core snapshot, proto/contract, tests, docs.
+
+**Non-goals (this step):** Node downloader; Node cache; Rust codec; projection; READY; process spawn; full
+Controller dispatch. `RetrievalCapability` stays an ephemeral exact-object bearer permission — a changed
+`SkillBundleRef` does not turn it into the digest authority (the frozen BundleRef is that authority).
+
+### Phase 6A.2 — Canonical Package Codec + Verified Immutable Cache — SUPERSEDED (target corrected)
+
+Status: **SUPERSEDED — architecture target corrected before runtime implementation.** The first 6A.2 attempt
+assumed **Desktop/Node (Rust)** as the production Skill runtime and was BLOCKED on two gates (§32 cross-repo
+proto, §43 missing Rust toolchain). That attempt is **NOT done**: it was superseded because **`desktop/` and
+`multica/` are reference implementations only, not the production Ora Cloud Skills runtime.** The production
+Ora product is Web-based and server-side. The correct heading below ("— Web Runtime Skill Materialization
+Architecture Closure") re-audits the actual Cloud runtime from code and freezes the server-side owner for each
+Skill materialization responsibility, independent of Desktop/Rust.
+
+### Phase 6A.2 — Web Runtime Skill Materialization Architecture Closure — DONE
+
+Status: **DONE** — architecture/ownership **closure complete**. The server-side Web runtime ownership for
+Skill delivery/materialization is frozen and recorded: production runtime = Cloud server-side Go;
+codec owner = Go `cloud/internal/skillpkg` (D36 amended); RetrievalCapability producer = Cloud `s3store`
+issuer, consumer = server-side runtime; cache/projection/README/spawn owners = server-side runtime;
+Controller = orchestration-only (never byte-proxy). Recorded in
+`specs/decisions/cloud/skills/20260928-web-runtime-skill-materialization-ownership.md` (`approved`) and
+the mirror under `specs/test-cases/cloud/skills/`. `desktop/`/`multica/` remain reference-only.
+
+Frozen principle: **migrate capability, not architecture.** `desktop/`/`multica/` are reference-only; the
+production Skills runtime is server-side Web infrastructure.
+
+### Phase 6A.3 — Server-side Skill Retrieval + Verification + Verified Cache — DONE
+
+Status: **DONE** — implements the frozen server-side materialization runtime: consume a
+RetrievalCapability → bounded package download → `package_digest` verification → canonical decode via
+`internal/skillpkg` → `content_digest` verification → verified immutable cache (identity
+`(digest_algorithm, content_digest)`, staging → atomic publish). **No** Attempt projection, runtime/provider
+layout, READY barrier, Agent spawn, or Controller dispatch loop.
+
+Owner package boundary (§3 audit): no production Node/agent runtime process exists in repo; the
+materialization effects (download/verify/decode/cache) are server-side derived-state effects that belong to
+**neither** `internal/simulator` (dev double), `frontend`/`desktop` (reference-only), `internal/controlgrpc`
+(transport), nor `internal/core` (DB transaction code). New smallest production-oriented package:
+**`internal/skillruntime`** — pure runtime, imports only `internal/skillpkg` (codec) + `internal/skillstore`
+(RetrievalCapability type, `AlgorithmSHA256`); no DB, no config import, no process spawn. Wired via a new
+`runtime` config section (cache root + retrieval timeouts) into `Store.SkillMaterializer` as the 6B
+dispatch seam.
+
+Scope: `internal/skillruntime` (Config / `FrozenSkillBundle` input / `VerifiedSkillBundle` output /
+`EnsureVerified`; bounded fail-closed HTTP client; typed error taxonomy; verified immutable cache with
+staging + atomic rename publish + `.complete` marker + corruption fail-closed); `runtime` config section
+(`skill_cache_root`, `retrieval.connect_timeout`/`request_timeout`); `Store.SkillMaterializer` seam;
+unit tests (retrieval / integrity / cache / concurrency / immutable tree); bilingual README.
+
+Non-goals: Attempt projection; `AgentRuntimeAdapter`; READY barrier; Agent/container spawn; full Controller
+dispatch/claim/recovery loop; cache GC service (bounded GC delivered in 6A.4).
+
+Delivered: `internal/skillruntime` (retrieval/fetch/cache/verify + errors), `runtime` config section,
+`Store.SkillMaterializer` seam, `cmd/server` wiring, 12 unit-test groups, bilingual README; ADR
+`20260928-server-side-skill-retrieval-verification-cache.md` (`implemented`) + mirror test-case. Gates:
+`go build ./...`, `go vet ./...`, `gofmt`, `git diff --check` — all clean.
+
+### Phase 6A.4 — Attempt Projection + Runtime Adapter + READY / Spawn Gate — DONE
+
+Status: **DONE** — extends the frozen `verified immutable cache → Attempt-scoped projection → runtime/provider
+adapter → READY barrier → spawn gate（abstraction）→ cleanup/bounded GC` chain, all in `internal/skillruntime`.
+Explicitly **no** full Controller dispatch/recovery loop and **no** daemon/process architecture (both remain
+6B). Inherits the Node materialization behavioral contract (D10–D26 / D33 / D41, moved server-side).
+
+AUDIT conclusion (per §5): no production Node/agent runtime process exists (`internal/simulator` = dev double,
+`internal/core/control.go` = pure DB orchestration) — so no daemon is invented. The runtime reads only the
+already-verified immutable cache（copy, never writable hardlink）and publishes an Attempt-scoped projection under
+`<attempt_root>/attempts/<attempt_id>/`（staging → single atomic rename）. READY is an explicit marker +
+validation step（`Project`→`PreparedAttempt`, `Ready`→`ReadyAttempt`）; spawn is gated at the type level
+（`SpawnGate.Open(ReadyAttempt)`）. Projection cleanup is ownership-scoped and idempotent; cache GC is
+bounded（age + oldest-first count）and independent of projections.
+
+Scope: `internal/skillruntime`（`projection.go` / `adapter.go`（`AgentRuntimeAdapter` + `FSAdapter`）/ `gate.go`
+（`SpawnGate` + `LaunchSpec`）/ `cleanup.go`（`CleanupAttempt` / `CollectStaging` / `Materializer.Collect`）+
+five new sentinels in `errors.go`）; `runtime.skill_attempt_root` config key (required with `runtime`); `Store.SkillProjector`
+seam; 14 unit-test groups; bilingual README additions; ADR
+`20260928-attempt-projection-runtime-adapter-ready-spawn-gate.md` (`implemented`) + mirror test-case.
+
+Non-goals: process/container spawn; provider-native discovery layouts (Codex/Claude/…); optional Skills;
+Controller dispatch/claim/recovery（6B）.
+
+Delivered: `internal/skillruntime` projection/adapter/gate/cleanup, `runtime.skill_attempt_root` section,
+`Store.SkillProjector` seam, `cmd/server` wiring, 14 unit-test groups, bilingual README; ADR
+`20260928-attempt-projection-runtime-adapter-ready-spawn-gate.md` (`implemented`) + mirror test-case. Gates:
+`go build ./...`, `go vet ./...`, `gofmt`, `git diff --check` — all clean.
+
+### Phase 6B.1 — Controller ↔ Runtime Dispatch + Attempt Lifecycle Integration — DONE
+
+Status: **implemented** — connects Controller claim/dispatch to server-side Skill runtime preparation and advances
+Attempt state safely/recoverably, extending the frozen chain `Execution admission → … → EnsureVerified → verified
+cache → Project → Ready → SpawnGate.Open → LaunchSpec`. It stops cleanly at `LaunchSpec` (no production
+process/daemon exists), never persists signed URLs, and uses only frozen `ExecutionSkillBinding` (no mutable Skill
+re-resolution).
+
+Delivered: `internal/core/attempt.go` (five Controller-role Control actions — `attempt_pending`/`attempt_get`/
+`attempt_claim`/`attempt_dispatch`/`attempt_result` — plus the `Store.PrepareAttempt` orchestration), `control.go`
+branch wiring (recovery reads before the lease gate, state-changing `attempt_*` after `leaseValid`, mirroring
+`clone.go`), `store.go` additive seams `SkillReadiness` + `SkillSpawnGate`, and `cmd/server` wiring. Tests:
+`integration/attempt_dispatch_test.go` — 13 tests across the 11 mirror anchors plus the bounded capability refresh
+and the multi-skill all-or-nothing rule. Gates: `gofmt`, `go vet ./...`, `go build ./...` clean; integration suite
+green against real PostgreSQL (the lone unrelated `cmd/devsetup` Windows file-mode test remains PRE-EXISTING). ADR
+`20260928-controller-attempt-dispatch-preparation.md` (`implemented`) + mirror test-case with the actual test names.
+
+**Orchestration owner** (`internal/core`, mirroring `clone.go`): the claim/dispatch/result loop is Controller-role
+Control actions over the Attempt's own durable columns (`node_id` / `dispatched_epoch` / `result`); **no**
+`operations`/`external_effects` schema change. **Effect boundary** = the attempt dispatch row itself (stable identity
+= `attempt_id`, recorded before any external IO).
+
+**Attempt state transitions** (existing enum, no new state value): `eligible → dispatched` (dispatch records
+`node_id` + `dispatched_epoch`); `dispatched → running` (preparation succeeded → projection READY → `LaunchSpec`
+obtainable); `dispatched → failed` (permanent preparation failure). `running` = "the Attempt has completed the
+fenced dispatch/preparation handoff and is ready for, or has entered, runtime execution" (NOT proof of process
+exec); the actual process consume of `LaunchSpec` is a future (Phase 2) concern.
+
+**Runtime preparation** is a server-side orchestration seam `Store.PrepareAttempt(ctx, executionID, attemptID)` (not a
+Control action — external IO never runs inside a DB transaction): read frozen bindings →
+`MintSkillRetrievalCapabilities`（ephemeral, never persisted）→ `EnsureVerified` per skill → `Project` → `Ready` →
+`SpawnGate.Open` → return `LaunchSpec`. The durable `attempt_result` Control action then records only
+`{attempt_id, prepared}` + a stable error code (no runtime path, no URL/signature).
+
+**Recovery/idempotency**: submission-idempotent + epoch-fenced Control actions (clone model); `Project` reuses an
+existing valid projection and `EnsureVerified` hits the verified cache, so a retry converges. Transient failures stay
+`dispatched`; permanent integrity failures fail closed.
+
+Non-goals: process/container spawn, provider-native layout, byte-proxy, any new runtime service/RPC, a new durable
+Attempt state.
+
 ### Phase 6A — Node Skill retrieval & immutable cache: runtime prerequisite resolved; implementation BLOCKED
 
 Status: **design contract closed; implementation not started (blocked)**. Phase 6A connects the Controller → Node

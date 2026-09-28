@@ -67,6 +67,11 @@
   - `attempts`：物理尝试（`ordinal` 递增、状态机 `eligible→…→succeeded/failed/canceled/superseded`、`UNIQUE(execution_id, ordinal)`）；首个 Attempt 与 Execution 同一事务原子创建。
   - `execution_skill_bindings`：不可变执行 fact（`skill_revision_id` + 冗余 `content_digest`/`size_bytes`/`package_format(_version)`，复合外键 `(skill_revision_id, skill_id)`），trigger 阻止 UPDATE，无 bearer-credential 字段。
   - 刻意不创建 RetrievalCapability / signed-URL / object-locator 字段，也不引入 dispatch/claim/lease 管线（Phase 6+）。
+- **`0019_skill_delivery_metadata.sql`**（append-only，排在 `0018` 之后；对应 plan Phase 6A.1）：冻结交付 integrity 元数据，使 Node 的字节级校验链（`SHA256(package bytes) == package_digest` **且** decoded tree digest == `content_digest`）能由 durable 不可变 revision 元数据驱动，而非解析 object key / signed URL / frontend / mutable current-revision：
+  - `skill_revisions` 增加 `package_digest`（exact ora-skill-package container 的字节级 SHA-256，object-storage ADR D4）与 `package_digest_algorithm`（默认 `sha256`）。`digest_algorithm` 仍是 **content/tree** digest 算法（与 `0015` 的 `UNIQUE(skill_id,digest_algorithm,content_digest)` 一致）；package digest 用独立显式列，两层永不混同。
+  - `execution_skill_bindings` 增加 `digest_algorithm`（content）、`package_digest`、`package_digest_algorithm`，使冻结快照携带完整 delivery digest（admission 时一次写入；表的 immutability trigger 继续禁止 UPDATE）。
+  - **Legacy-row 兼容（§4）**：全部新列可空——0019 之前的 revision/binding 行没有 durable package digest，且迁移 SQL 绝不允许靠解析 `object_locator` key 或访问 Object Storage 来恢复（违反 §7 权威规则）。新写入要求该值，core 的 admission 路径在可信 `package_digest` 缺失时 fail closed。pre-0019 行的回填（如需）属独立的 runtime 机制（re-ingest / verified recompute），不是迁移 SQL 编造 digest。
+  - 本文件不修改 `0015` / `0018`。
 
 ## 校验和完整性与不可变性
 

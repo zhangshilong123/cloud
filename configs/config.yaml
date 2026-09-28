@@ -46,6 +46,16 @@ storage:
     connect: 5s             # connection establishment
     request: 30s            # per-operation end-to-end bound
   retrieval_capability_ttl: 300s
+# Server-side Skill runtime (retrieval + verification + verified cache + Attempt projection). Absent =>
+# materializer/projector unavailable. Present => skill_cache_root and skill_attempt_root are required
+# (no shared-machine default is invented); the timeouts below mirror the storage section's. Override via
+# CLOUD_RUNTIME_* (e.g. CLOUD_RUNTIME_SKILL_CACHE_ROOT).
+runtime:
+  skill_cache_root: "./.local/skill-cache" # local dev cache under the git-ignored .local dir
+  skill_attempt_root: "./.local/skill-attempts" # Attempt-scoped Skill projections (6A.4), also .local
+  retrieval:
+    connect_timeout: 5s
+    request_timeout: 30s
 auth:
   audience: "ora-cloud"
   # Public keys of the local Gateway; generate them with `task setup` (config.toml). Production replaces

@@ -7,13 +7,12 @@
 package controlpb
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
@@ -189,6 +188,13 @@ func (x *CloneSpec) GetBranch() string {
 // ADR D4 / plan §17.1). It mirrors the immutable ExecutionSkillBinding content identity so the
 // Controller and Node never re-resolve mutable Skill state. The retrieval capability is a separate
 // later layer and deliberately not carried here.
+//
+// Phase 6A.1 (Skill Delivery Metadata Plumbing) added the delivery integrity metadata that drives
+// the Node's required byte-verification chain: `digest_algorithm` (the *content/tree* digest
+// algorithm, consistent with skill_revisions.digest_algorithm), plus the exact physical package
+// byte digest (`package_digest`) and its own algorithm. These are additive fields — 6/7/8 — and
+// existing fields are never renumbered. `object_locator` intentionally stays internal and is NOT
+// carried here (§18).
 type SkillBundleRef struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	SkillRevisionId      string                 `protobuf:"bytes,1,opt,name=skill_revision_id,json=skillRevisionId,proto3" json:"skill_revision_id,omitempty"`
@@ -196,8 +202,15 @@ type SkillBundleRef struct {
 	SizeBytes            int64                  `protobuf:"varint,3,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	PackageFormat        string                 `protobuf:"bytes,4,opt,name=package_format,json=packageFormat,proto3" json:"package_format,omitempty"`
 	PackageFormatVersion int32                  `protobuf:"varint,5,opt,name=package_format_version,json=packageFormatVersion,proto3" json:"package_format_version,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Content/tree digest algorithm of `content_digest` (e.g. "sha256").
+	DigestAlgorithm string `protobuf:"bytes,6,opt,name=digest_algorithm,json=digestAlgorithm,proto3" json:"digest_algorithm,omitempty"`
+	// Byte-level SHA-256 identity of the exact ora-skill-package container. NOT the cache key — that
+	// is (digest_algorithm, content_digest); this is the byte-verification expectation only.
+	PackageDigest string `protobuf:"bytes,7,opt,name=package_digest,json=packageDigest,proto3" json:"package_digest,omitempty"`
+	// Digest algorithm for `package_digest` (e.g. "sha256").
+	PackageDigestAlgorithm string `protobuf:"bytes,8,opt,name=package_digest_algorithm,json=packageDigestAlgorithm,proto3" json:"package_digest_algorithm,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SkillBundleRef) Reset() {
@@ -263,6 +276,27 @@ func (x *SkillBundleRef) GetPackageFormatVersion() int32 {
 		return x.PackageFormatVersion
 	}
 	return 0
+}
+
+func (x *SkillBundleRef) GetDigestAlgorithm() string {
+	if x != nil {
+		return x.DigestAlgorithm
+	}
+	return ""
+}
+
+func (x *SkillBundleRef) GetPackageDigest() string {
+	if x != nil {
+		return x.PackageDigest
+	}
+	return ""
+}
+
+func (x *SkillBundleRef) GetPackageDigestAlgorithm() string {
+	if x != nil {
+		return x.PackageDigestAlgorithm
+	}
+	return ""
 }
 
 // A skill-bearing execution kind: the exact frozen Skill revisions an Agent execution runs with.
@@ -1573,14 +1607,17 @@ const file_ora_cloud_internal_v1_executions_proto_rawDesc = "" +
 	"\n" +
 	"repository\x18\x01 \x01(\tR\n" +
 	"repository\x12\x16\n" +
-	"\x06branch\x18\x02 \x01(\tR\x06branch\"\xdf\x01\n" +
+	"\x06branch\x18\x02 \x01(\tR\x06branch\"\xeb\x02\n" +
 	"\x0eSkillBundleRef\x12*\n" +
 	"\x11skill_revision_id\x18\x01 \x01(\tR\x0fskillRevisionId\x12%\n" +
 	"\x0econtent_digest\x18\x02 \x01(\tR\rcontentDigest\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x03 \x01(\x03R\tsizeBytes\x12%\n" +
 	"\x0epackage_format\x18\x04 \x01(\tR\rpackageFormat\x124\n" +
-	"\x16package_format_version\x18\x05 \x01(\x05R\x14packageFormatVersion\"Z\n" +
+	"\x16package_format_version\x18\x05 \x01(\x05R\x14packageFormatVersion\x12)\n" +
+	"\x10digest_algorithm\x18\x06 \x01(\tR\x0fdigestAlgorithm\x12%\n" +
+	"\x0epackage_digest\x18\a \x01(\tR\rpackageDigest\x128\n" +
+	"\x18package_digest_algorithm\x18\b \x01(\tR\x16packageDigestAlgorithm\"Z\n" +
 	"\fSkillRunSpec\x12J\n" +
 	"\rskill_bundles\x18\x01 \x03(\v2%.ora.cloud.internal.v1.SkillBundleRefR\fskillBundles\"\x96\x01\n" +
 	"\x0eExecutionInput\x128\n" +
@@ -1678,7 +1715,8 @@ const file_ora_cloud_internal_v1_executions_proto_rawDesc = "" +
 	"\x13RecordQueriedResult\x121.ora.cloud.internal.v1.RecordQueriedResultRequest\x1a2.ora.cloud.internal.v1.RecordQueriedResultResponse\x12d\n" +
 	"\vGetDispatch\x12).ora.cloud.internal.v1.GetDispatchRequest\x1a*.ora.cloud.internal.v1.GetDispatchResponse\x12\x82\x01\n" +
 	"\x15ListPendingDispatches\x123.ora.cloud.internal.v1.ListPendingDispatchesRequest\x1a4.ora.cloud.internal.v1.ListPendingDispatchesResponse\x12y\n" +
-	"\x12MintSkillRetrieval\x120.ora.cloud.internal.v1.MintSkillRetrievalRequest\x1a1.ora.cloud.internal.v1.MintSkillRetrievalResponseb\x06proto3"
+	"\x12MintSkillRetrieval\x120.ora.cloud.internal.v1.MintSkillRetrievalRequest\x1a1.ora.cloud.internal.v1.MintSkillRetrievalResponseB\xe0\x01\n" +
+	"\x19com.ora.cloud.internal.v1B\x0fExecutionsProtoP\x01Z;github.com/wanglongan587/cloud/internal/controlpb;controlpb\xa2\x02\x03OCI\xaa\x02\x15Ora.Cloud.Internal.V1\xca\x02\x15Ora\\Cloud\\Internal\\V1\xe2\x02!Ora\\Cloud\\Internal\\V1\\GPBMetadata\xea\x02\x18Ora::Cloud::Internal::V1b\x06proto3"
 
 var (
 	file_ora_cloud_internal_v1_executions_proto_rawDescOnce sync.Once
