@@ -2252,6 +2252,116 @@ verified cache，故重试收敛。transient 失败保持 `dispatched`；永久�
 
 非目标：进程/容器 spawn、provider 原生布局、byte-proxy、任何新 runtime service/RPC、新 durable Attempt 状态。
 
+### Phase 6B.2 —— Production Runtime Ownership + LaunchSpec Consumer + Process Execution —— AUDIT STOP
+
+状态：**IN PROGRESS —— 强制审计结论：生产 runtime host ABSENT；编码前 STOP**（§4/§53）。
+
+审计（§3）：生产 runtime host **不存在**。各候选组件分类：
+
+| 候选 | 角色 | 分类 |
+| --- | --- | --- |
+| `internal/core` | 耐久编排、Attempt 生命周期、fencing（`attempt.go`/`control.go`/`executions.go`） | PRODUCTION（仅编排；**无 spawn**） |
+| `internal/skillruntime` | verified cache / projection / READY / `SpawnGate.Open` → `LaunchSpec` | PRODUCTION（物化；明确 "WITHOUT spawning anything"） |
+| `internal/controlgrpc` | Controller 侧翻译层（lease + clone 循环 execution + signals + `MintSkillRetrieval`） | PRODUCTION（仅 transport；**无 spawn**） |
+| `cmd/server` | HTTP + control-gRPC 组合 | PRODUCTION（仅组合；**无 spawn**） |
+| `internal/simulator` | HTTP dev double；`substrate.go` 仅为 clone fixture 跑 `git` | SIMULATOR / DEV DOUBLE |
+| 进程/容器执行、工作目录、环境、生命周期、stdout/stderr、退出码、cancellation | — | **ABSENT** |
+
+记录的 ownership（§2，均从代码核实）：
+
+- **actual production runtime host**：**ABSENT**（生产代码无任何 `os/exec`/`exec.Command`/容器运行时/worker loop/
+  进程 supervisor；仅开发工具链与 simulator 的 `git` fixture 使用子进程）。
+- **actual LaunchSpec consumer**：**ABSENT**（`LaunchSpec{AttemptID, Root, Provisions}` 是纯 DTO；唯一消费者是
+  `PrepareAttempt` 调用的 `SpawnGate.Open`，它返回即止）。
+- **actual process execution owner**：**ABSENT**。
+- **actual provider/runtime adapter owner**：部分 — 存在 `AgentRuntimeAdapter` + `FSAdapter`（仅库、provider-neutral、
+  无 spawn）；无真实 provider（Codex/Claude/…）或 runtime adapter。
+- **actual process lifecycle result path**：**ABSENT**。
+
+LaunchSpec 内容审计（§8）：`{AttemptID, Root, Provisions []SkillProjection}`。**没有** command、arguments、
+environment、可执行/命令权威或 provider 身份，因此尚不可启动；为其补字段属 runtime 架构变更，在 ownership
+ADR 获批前**不**轻率扩展。
+
+STOP gate（§4）：因无任何已批生产组件 owns 进程/容器执行，故**不自动发明 daemon/进程架构**。ownership 缺口已
+记录于 `specs/decisions/cloud/skills/20260928-production-runtime-host-ownership.md`（6B.2A.1 起 **`approved`**），其提出最小
+生产 runtime host 架构（一个独立的 runtime host：消费 `LaunchSpec`、own 进程/容器启动 + 工作目录 + 环境 +
+生命周期 + stdout/stderr + 退出码 + cancellation、spawn 前对 `internal/core` 校验 `attempt_id`/`node_id`/
+`dispatched_epoch`/终态 fencing、可执行来自已批 runtime/provider 配置而非 Skill 包内容、只经既有 Controller 侧
+transport 回报非秘密 start result）。进程**形态**（Cloud 进程内 supervisor vs Substrate Node 容器 init-job）原本是
+留待批准的开放性分叉；6B.2A.1（见下）已产品冻结为「沙盒 Node/Substrate 容器」，materialization 迁入 Node（伴生 ADR
+`20260929-node-runtime-materialization-placement.md`），本阶段仍**不实现任何进程执行代码**。
+
+本阶段**未写任何进程执行代码**。
+
+### Phase 6B.2A —— Production Runtime Host 架构闭包 —— 审计完成、分叉未闭合（STOP）
+
+状态：**审计完成 —— 进程形态分叉无法从既有证据闭合；架构保持 `proposed`；STOP**（§14/§40）。
+
+本架构-only 切片精读 Node/Substrate/Controller 全链权威，判定「谁 owns `LaunchSpec → runtime 启动 → 生命周期」。
+结论：**分叉仍未闭合**，因为两组证据指向不同方向且无所桥接：
+
+| 方向 | 证据（状态） | 含义 |
+| --- | --- | --- |
+| 物理执行 = 沙盒 Node（Candidate B） | `cloud/operation/0-workspace-runtime-follows-desktop-node.md`（implemented）；`controller/node-management/0-controller-drives-workspace-sandboxes.md`（implemented）；`node/process/architecture/0-node-host-and-scope-guardians.md`（implemented）；`cluster/sandbox-server/20260926-…`（implemented）；node materialization ADR D27/D12（approved） | 生产 Workspace 执行平面 = 每 Workspace 一个 `ora-node`（Docker 沙盒内），由 Controller 驱动；Node 的 host/guardian owns 进程 spawn/output/signal/cleanup |
+| materialization = Cloud 服务端 Go（Candidate A 域 / 未定） | `cloud/skills/20260928-web-runtime-skill-materialization-ownership.md`（approved）：D9 表 spawn barrier owner 写为「服务端 runtime / **Substrate**」（故意两可）；未解决 #1 把进程形态留给「Phase 2 Substrate」；`internal/skillruntime/gate.go` 产出 server-local `LaunchSpec.Root` | materialization（下载/校验/decode/cache/project/READY）收敛到服务端 Go；spawn 进程形态被显式延后 |
+
+无法从证据收敛的两个根因（§14/§39/§40）：
+
+1. **materialization–execution 跨宿主**：服务端 materialization 产出 server-local `LaunchSpec.Root`，而物理执行平面
+   （沙盒 `ora-node` 容器）是**不同文件系统宿主**。无任何 ADR/代码桥接两者——没有「materialization 迁入 Node」、
+   也没有「投影 server→Node 传输」决定。因此 §14「无 [same-filesystem-host] 则当前架构不足，STOP 设计」成立。
+2. **Controller 目前只派发 clone，不派发 Agent 执行**：`0-controller-drives-workspace-sandboxes.md` 未解决第一条明言
+   「任务与交互执行（execution_tickets）的派发：Controller 目前只派发 clone」。Skill 执行要复用的
+   claim→dispatch→result 协议，其生产证据只覆盖 clone，不覆盖 Agent 进程执行。
+
+结论：D10 三分叉（A 进程内 supervisor / B 沙盒 Node 容器 / C 独立服务）无法自动选定。A/C 需新增服务端进程
+supervisor（当前缺失）；B 需先闭合 materialization 跨宿主。二者都是架构决策，不属于「从证据读出来」。
+
+记录于 `specs/decisions/cloud/skills/20260928-production-runtime-host-ownership.md`（保持 **`proposed`**；新增 6B.2A
+审计段 + Q2 materialization 本地性问题）+ 镜像测试 `specs/test-cases/cloud/skills/production-runtime-host-ownership.md`
+（future anchors，**NOT RUN**）。**未写任何 runtime 代码** —— 无 `os/exec`、无进程 supervisor、无 worker goroutine、
+无 daemon、无容器集成、无 runtime-instance 持久化、无新进程 RPC。
+
+### Phase 6B.2A.1 —— Node Runtime Materialization 放置闭合 —— DONE
+
+状态：**DONE —— 已批准一个具体的 Rust↔Go materialization 边界；架构-only，无实现**。
+
+产品方向现已在产品层冻结并闭合 6B.2A 分叉：
+
+- **Q1（物理执行）** = 生产 Node/Substrate 执行平面（沙盒 `ora-node` + `host`/`guardian` 是进程生命周期权威；D10 分叉
+  落于「Substrate Node 容器」）。
+- **Q2（materialization 本地性）** = Skill materialization 必须在被派发的 runtime Node / 与执行同一文件系统宿主上执行。
+  **不**引入 server→Node 投影传输作为默认架构。
+- **已冻结（D1–D9）**：Go `skillpkg` 保持唯一 canonical codec owner；不在 Rust 二次实现 codec/materializer；verified cache
+  与 Attempt projection 是 derived/disposable、local 到 runtime 宿主；RetrievalCapability ephemeral、绝不持久化/日志；
+  Controller 仍 orchestration-only（非字节代理）。
+
+本切片回答主问题——*Rust `ora-node` 生产宿主如何在同一 runtime 文件系统宿主上使用既有 Go canonical materialization，
+而不写第二套 codec？*——通过审计真实沙盒镜像（`desktop/docker/Dockerfile` + `node-entrypoint.sh`，纯 Rust、tini PID 1、
+`/var/lib/ora` Workspace 卷）、Node 既有 companion-subprocess seam（`ora-process-host` 按绝对路径经继承 fd 派生
+`ora-process-guardian`；`ora-node` 经 `gitlancer::CliGitRunner` 委托 git）与 Go materializer/projector 的 process-safety
+（`os.MkdirTemp` staging + 原子 rename + reuse-if-valid marker）。结论：**Candidate B —— 沙盒镜像内随 Node 一起发布的 Go
+one-shot helper `ora-skill-materialize`，由 Node 的 host/guardian 经封闭 fd/socket 调用，端到端复用
+`cloud/internal/skillpkg` + `cloud/internal/skillruntime`（`EnsureVerified → Project → Ready → SpawnGate.Open`），返回窄结果
+`{prepared, local_root, stable_error_code?}`。**无 server→Node 投影传输、无 Rust codec 重写、无 daemon、无长驻存储凭据。
+
+冻结于 `specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md`（**`approved`**）+ ownership ADR
+`20260928-production-runtime-host-ownership.md` 由 **`proposed` → `approved`**（D10 分叉闭合、Q1/Q2 冻结）。镜像测试
+`specs/test-cases/cloud/skills/production-runtime-host-ownership.md` 增 6B.2A.1 future anchors（**NOT RUN**）。
+**未写任何 helper/RPC/镜像/进程代码。** 6B.2B 已解阻塞。
+
+### Phase 6B.2B —— Node-local Materialization 集成（UNBLOCKED —— 下一步）
+
+范围（原 BLOCKED）：把 `Store.PrepareAttempt` 的物化半程（download→verify→cache→project→READY→`SpawnGate.Open`）从
+Cloud server 迁到被派发 Node 的沙盒本地 Go helper，复用 canonical Go codec/materializer。具体：沙盒镜像加 Go build stage
+产出 `ora-skill-materialize`（`cloud/cmd/ora-skill-materialize`，`internal/skillruntime`+`internal/skillpkg` 的薄 wrapper）；
+加 Node 侧派生 seam（host/guardian 按绝对路径经封闭 fd/socket 派生 helper）；定 `MaterializeAttemptRequest`/`Result` wire
+形状（冻结 bundle 元数据 + short-lived capability；capability 绝不进 argv/env/日志）；收窄 `Store.PrepareAttempt` 的非最终
+生产放置（Cloud 只保留绑定解析 + `MintSkillRetrieval`）。集成测试覆盖：Node-local 物化、同文件系统 `LaunchSpec`、canonical
+Go codec 复用（无 Rust 复制）、RetrievalCapability 不进 argv/env/日志、同 epoch 重复物化收敛、跨进程 cache 发布安全、
+projection Attempt 隔离、prepared 结果按 `node_id`+`dispatched_epoch` 栅栏、server 不再执行生产物化。**这仅是
+materialization 集成 —— 无 Agent 进程 spawn。**Agent 进程启动（`LaunchSpec` 消费 + 真实 spawn）是 6B.2C；生命周期是 6B.3。
+
 ### Phase 6A —— Node Skill retrieval & immutable cache：runtime 前置已解决、设计契约已闭合；实现 BLOCKED
 
 状态：**设计契约已闭合；实现尚未开始（被阻塞）**。Phase 6A 打通 Controller → Node 的 Skill delivery

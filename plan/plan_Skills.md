@@ -2065,6 +2065,133 @@ existing valid projection and `EnsureVerified` hits the verified cache, so a ret
 Non-goals: process/container spawn, provider-native layout, byte-proxy, any new runtime service/RPC, a new durable
 Attempt state.
 
+### Phase 6B.2 — Production Runtime Ownership + LaunchSpec Consumer + Process Execution — AUDIT STOP
+
+Status: **IN PROGRESS — mandatory audit concluded: production runtime host ABSENT; STOP before any code** (§4/§53).
+
+AUDIT (§3): the production runtime host is **ABSENT**. Classification of every candidate:
+
+| candidate | role | classification |
+| --- | --- | --- |
+| `internal/core` | durable orchestration, Attempt lifecycle, fencing (`attempt.go`/`control.go`/`executions.go`) | PRODUCTION (orchestration-only; **no spawn**) |
+| `internal/skillruntime` | verified cache / projection / READY / `SpawnGate.Open` → `LaunchSpec` | PRODUCTION (materialization; explicitly "WITHOUT spawning anything") |
+| `internal/controlgrpc` | Controller-facing translation over `Store.Control` (lease + clone-loop execution + signals + `MintSkillRetrieval`) | PRODUCTION (transport only; **no spawn**) |
+| `cmd/server` | HTTP + control-gRPC composition | PRODUCTION (composition; **no spawn**) |
+| `internal/simulator` | HTTP dev double; `substrate.go` runs `git` for clone fixtures only | SIMULATOR / DEV DOUBLE |
+| process/container execution, working dir, environment, lifetime, stdout/stderr, exit status, cancellation | — | **ABSENT** |
+
+Recorded ownership (§2), each verified from code:
+
+- **actual production runtime host**: **ABSENT** (no `os/exec`/`exec.Command`/container runtime/worker loop/process
+  supervisor anywhere in production code; only dev tooling + the simulator's `git` fixture use subprocesses).
+- **actual LaunchSpec consumer**: **ABSENT** (`LaunchSpec{AttemptID, Root, Provisions}` is a pure DTO; the sole
+  consumer is `SpawnGate.Open`'s caller `PrepareAttempt`, which returns it and stops).
+- **actual process execution owner**: **ABSENT**.
+- **actual provider/runtime adapter owner**: partial — `AgentRuntimeAdapter` + `FSAdapter` exist (LIBRARY ONLY,
+  provider-neutral, no spawn); no real provider (Codex/Claude/…) or runtime adapter exists.
+- **actual process lifecycle result path**: **ABSENT**.
+
+LaunchSpec content audit (§8): `{AttemptID, Root, Provisions []SkillProjection}`. It has **no** command, arguments,
+environment, executable/command authority, or provider identity, so it is not yet launchable. Expanding it to add
+those fields is a runtime-architecture change and is **not** done casually (frozen until the ownership ADR is
+approved).
+
+STOP gate (§4): because no approved production component owns process/container execution, no daemon/process
+architecture is invented. The ownership gap is documented in
+`specs/decisions/cloud/skills/20260928-production-runtime-host-ownership.md` (**`approved`** as of 6B.2A.1), which proposes the
+smallest runtime-host architecture (a dedicated production runtime host that consumes `LaunchSpec`, owns
+process/container start + working directory + environment + lifetime + stdout/stderr + exit status + cancellation,
+validates `attempt_id`/`node_id`/`dispatched_epoch`/terminal fencing against `internal/core` before spawn, derives
+the executable from approved runtime/provider config — never Skill package content — and reports only a non-secret
+start result through the existing Controller-facing transport). The process **form** was an open architectural fork
+left to approval; 6B.2A.1 (below) closed it: production execution plane = sandbox Node/Substrate container, with
+materialization relocated into the Node (see the companion ADR
+`specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md`).
+
+No process execution code was written in this phase.
+
+### Phase 6B.2A — Production Runtime Host Architecture Closure — AUDIT COMPLETE, FORK OPEN (STOP)
+
+Status: **AUDIT COMPLETE — the process-form fork is NOT closable from existing evidence; architecture stays
+`proposed`; STOP** (§14/§40).
+
+The architecture-only slice read the full Node/Substrate/Controller authority chain to decide who owns
+`LaunchSpec → runtime start → lifecycle` in production. Outcome: the fork **remains open**, because two halves of the
+evidence point in different directions with no bridge:
+
+| direction | evidence (status) | implication |
+| --- | --- | --- |
+| physical execution = sandbox Node (Candidate B) | `cloud/operation/0-workspace-runtime-follows-desktop-node.md` (implemented); `controller/node-management/0-controller-drives-workspace-sandboxes.md` (implemented); `node/process/architecture/0-node-host-and-scope-guardians.md` (implemented); `cluster/sandbox-server/20260926-…` (implemented); node materialization ADR D27/D12 (approved) | production workspace execution plane is an `ora-node` per Workspace inside a Docker sandbox, driven by Controller; the Node's host/guardian owns process spawn/output/signal/cleanup |
+| materialization = Cloud server-side Go (Candidate A territory / ambiguous) | `cloud/skills/20260928-web-runtime-skill-materialization-ownership.md` (approved): D9 spawn-barrier owner written as "服务端 runtime / **Substrate**" (deliberately two-way); 未解决 #1 defers process form to "Phase 2 Substrate"; `internal/skillruntime/gate.go` produces server-local `LaunchSpec.Root` | materialization (download/verify/decode/cache/project/READY) converges to server-side Go; the spawn process form is explicitly deferred |
+
+Two roots that make the fork un-closable from evidence (§14/§39/§40):
+
+1. **materialization–execution cross-host**: server-side materialization produces a server-local `LaunchSpec.Root`,
+   but the physical execution plane (sandbox `ora-node` container) is a *different filesystem host*. No ADR/code
+   bridges the two — there is no "materialization relocated into the Node" and no "projection transported server→Node"
+   decision. §14 ("no same-filesystem-host ⇒ current architecture insufficient ⇒ STOP") therefore holds.
+2. **Controller currently dispatches clone only, not Agent execution**: `0-controller-drives-workspace-sandboxes.md`
+   未解决 #1 states "任务与交互执行（execution_tickets）的派发：Controller 目前只派发 clone". The
+   claim→dispatch→result protocol precedent the Skills loop would reuse is proven only for clone, not for Agent
+   process execution.
+
+Consequence: D10's three-way fork (A in-process supervisor / B sandbox-Node container / C dedicated service) cannot be
+auto-chosen. A/C require a new server-side process supervisor that does not exist; B requires first closing the
+materialization cross-host gap. Both are architecture decisions, not something readable from the ADRs.
+
+Recorded in `specs/decisions/cloud/skills/20260928-production-runtime-host-ownership.md` (stays **`proposed`**; new
+6B.2A audit section + Q2 materialization-locality question added) + test mirror
+`specs/test-cases/cloud/skills/production-runtime-host-ownership.md` (future anchors, **NOT RUN**). **No runtime code
+was written** — no `os/exec`, no process supervisor, no worker goroutine, no daemon, no container integration, no
+runtime-instance persistence, no new process RPC.
+
+### Phase 6B.2A.1 — Node Runtime Materialization Placement Closure — DONE
+
+Status: **DONE — one concrete Rust↔Go materialization boundary approved; architecture-only, no implementation**.
+
+Product direction is now frozen at the product level and closes the 6B.2A fork:
+
+- **Q1 (physical execution)** = production Node/Substrate execution plane (the sandbox `ora-node` + `host`/`guardian`
+  are the process-lifecycle authority; D10 fork resolves to "Substrate Node container").
+- **Q2 (materialization locality)** = Skill materialization must execute on the assigned runtime Node / same filesystem
+  host as execution. **Do NOT** introduce server→Node projection transport as the default architecture.
+- **Frozen** (D1–D9): Go `skillpkg` stays canonical codec owner; no Rust reimplementation of the codec/materializer;
+  verified cache and Attempt projection are derived/disposable and local to the runtime host; RetrievalCapability is
+  ephemeral and never persisted/logged; Controller stays orchestration-only (not a byte proxy).
+
+The slice answered the primary question — *how does a Rust `ora-node` production host use the existing Go canonical
+materialization capability on the same runtime filesystem host, without writing a second codec?* — by auditing the
+actual sandbox image (`desktop/docker/Dockerfile` + `node-entrypoint.sh`, Rust-only, tini PID 1,
+`/var/lib/ora` Workspace volume), the Node's existing companion-subprocess seams (`ora-process-host` spawns
+`ora-process-guardian` by absolute path over inherited fds; `ora-node` delegates git via `gitlancer::CliGitRunner`),
+and the Go materializer/`projector` process-safety (`os.MkdirTemp` staging + atomic rename + reuse-if-valid markers).
+Conclusion: **Candidate B — a Go one-shot helper `ora-skill-materialize` shipped inside the same sandbox image,
+invoked by the Node's host/guardian over a closed fd/socket, reusing `cloud/internal/skillpkg` +
+`cloud/internal/skillruntime` end-to-end (`EnsureVerified → Project → Ready → SpawnGate.Open`), returning a narrow
+`{prepared, local_root, stable_error_code?}` result.** No server→Node projection transfer, no Rust codec rewrite, no
+daemon, no long-lived storage credentials.
+
+Frozen in `specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md` (**`approved`**) + the
+ownership ADR `20260928-production-runtime-host-ownership.md` moved **`proposed` → `approved`** (D10 fork closed;
+Q1/Q2 frozen). Test mirror `specs/test-cases/cloud/skills/production-runtime-host-ownership.md` gained 6B.2A.1
+future anchors (**NOT RUN**). **No helper/RPC/image/process code was written.** 6B.2B is now unblocked.
+
+### Phase 6B.2B — Node-local Materialization Integration (UNBLOCKED — next)
+
+Scope (formerly BLOCKED): relocate the materialization half of `Store.PrepareAttempt` (download→verify→cache→project→
+READY→`SpawnGate.Open`) from Cloud server to the assigned Node's sandbox-local Go helper, reusing the canonical Go
+codec/materializer. Concretely: add a Go build stage to the sandbox image to produce `ora-skill-materialize`
+(`cloud/cmd/ora-skill-materialize`, a thin wrapper over `internal/skillruntime`+`internal/skillpkg`); add the Node-side
+spawn seam (host/guardian derives the helper by absolute path over a closed fd/socket); define the
+`MaterializeAttemptRequest`/`Result` wire shape (frozen bundle metadata + short-lived capabilities; capability never
+in argv/env/logs); narrow `Store.PrepareAttempt`'s non-final production placement (Cloud retains binding resolution +
+`MintSkillRetrieval` only). Integration tests cover: Node-local materialization, same-filesystem `LaunchSpec`, canonical
+Go codec reused (no Rust duplicate), RetrievalCapability never in argv/env/logs, same-epoch repeated materialization
+converges, cross-process cache publication safe, projection Attempt isolation, prepared result fenced by
+`node_id`+`dispatched_epoch`, server no longer performing production materialization. **This is materialization
+integration only — NO Agent process spawn yet.** Agent process start (`LaunchSpec` consumption + real spawn) is 6B.2C;
+lifecycle is 6B.3.
+
 ### Phase 6A — Node Skill retrieval & immutable cache: runtime prerequisite resolved; implementation BLOCKED
 
 Status: **design contract closed; implementation not started (blocked)**. Phase 6A connects the Controller → Node
