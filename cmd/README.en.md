@@ -13,6 +13,7 @@ operating-system signal handling, and process exit codes.
 - [cloudctl](cloudctl/README.en.md) is the restricted deployment and operations CLI for migrations, tenant bootstrap, and credential reference management.
 - [devsetup](devsetup/README.en.md) is the development-only one-shot setup (`task setup`): from `config.toml` it generates the Gateway private keys, the public keys Cloud trusts and the PKCE key, writes the GitHub client secret file and `.local/dev.env`, and applies migrations.
 - [simulator](simulator/README.en.md) provides an all-in-one local demo environment backed by in-process Substrate and Git execution doubles.
+- [ora-skill-materialize](ora-skill-materialize/README.en.md) is the assigned Node's sandbox-local, one-shot Skill materialization helper (reuses the canonical Go codec/materializer, invoked over a closed stdin/stdout channel, never starts the Agent process).
 - [openapi](openapi/README.en.md) compiles and synchronizes the canonical OpenAPI 3.0 specification (`api/openapi.json`) from Go contract definitions.
 - [checkformat](checkformat/README.en.md) enforces repository Go formatting standards as a strict failing CI gate.
 

@@ -1345,10 +1345,10 @@ There is still **no** upload HTTP API, production Object Storage provider, or `R
 This subsection is the acceptance contract for the Step 2C implementation slice.
 
 **SKILL.md metadata contract — implemented (`internal/skillmeta`).** The `canonical_name` derivation gap was
-closed by `specs/decisions/cloud/skills/20260927-skill-md-metadata-contract.md` (status `proposed`), and the
-parser is now implemented in `internal/skillmeta`: `canonical_name = ASCII lowercase(TrimSpace(name))` is the
-single transformation; `name` is required and must be a YAML string matching ASCII `[A-Za-z0-9._-]+` (not
-starting with `.`, ≤ 200 bytes); `description` is optional (string, ≤ 4096 bytes); duplicate keys and invalid
+closed by `specs/decisions/cloud/skills/20260927-skill-md-metadata-contract.md` (status `implemented`), and the
+parser is now implemented in `internal/skillmeta`: `canonical_name = NFC + Unicode case-fold(TrimSpace(name))` is the
+single transformation; `name` is required and must be a YAML string that is valid UTF-8 (not
+starting with `.`, no control characters, ≤ 200 bytes); `description` is optional (string, ≤ 4096 bytes); duplicate keys and invalid
 YAML fail closed; unknown fields are opaque and preserved; `internal/skillpkg` stays frozen and does not parse
 `name`. Compatible with Desktop `0-static-skill-package.md` D3 and with all audited multica content.
 
@@ -2176,21 +2176,314 @@ ownership ADR `20260928-production-runtime-host-ownership.md` moved **`proposed`
 Q1/Q2 frozen). Test mirror `specs/test-cases/cloud/skills/production-runtime-host-ownership.md` gained 6B.2A.1
 future anchors (**NOT RUN**). **No helper/RPC/image/process code was written.** 6B.2B is now unblocked.
 
-### Phase 6B.2B — Node-local Materialization Integration (UNBLOCKED — next)
+### Phase 6B.2B — Node-local Materialization Integration (DONE)
 
-Scope (formerly BLOCKED): relocate the materialization half of `Store.PrepareAttempt` (download→verify→cache→project→
-READY→`SpawnGate.Open`) from Cloud server to the assigned Node's sandbox-local Go helper, reusing the canonical Go
-codec/materializer. Concretely: add a Go build stage to the sandbox image to produce `ora-skill-materialize`
-(`cloud/cmd/ora-skill-materialize`, a thin wrapper over `internal/skillruntime`+`internal/skillpkg`); add the Node-side
-spawn seam (host/guardian derives the helper by absolute path over a closed fd/socket); define the
-`MaterializeAttemptRequest`/`Result` wire shape (frozen bundle metadata + short-lived capabilities; capability never
-in argv/env/logs); narrow `Store.PrepareAttempt`'s non-final production placement (Cloud retains binding resolution +
-`MintSkillRetrieval` only). Integration tests cover: Node-local materialization, same-filesystem `LaunchSpec`, canonical
-Go codec reused (no Rust duplicate), RetrievalCapability never in argv/env/logs, same-epoch repeated materialization
-converges, cross-process cache publication safe, projection Attempt isolation, prepared result fenced by
-`node_id`+`dispatched_epoch`, server no longer performing production materialization. **This is materialization
-integration only — NO Agent process spawn yet.** Agent process start (`LaunchSpec` consumption + real spawn) is 6B.2C;
-lifecycle is 6B.3.
+Status: **DONE** — relocated the materialization half of `Store.PrepareAttempt` from Cloud server to the assigned
+Node's sandbox-local Go one-shot helper `cmd/ora-skill-materialize`, reusing the canonical Go codec/materializer
+(`internal/skillpkg` + `internal/skillruntime`). The frozen boundary is `specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md`
+(**`implemented`**, Candidate B). Delivered: the helper (closed stdin/stdout JSON contract, exit 0/1/2, §41 stable
+error codes, single codec/materializer) + **deletion** of `Store.PrepareAttempt` and the four server seams
+(`SkillMaterializer`/`SkillProjector`/`SkillReadiness`/`SkillSpawnGate`) + removal of the server `runtime` config
+section; the server is now orchestration-only (binding descriptor + capability mint + fenced `attempt_result`).
+Note (§ deviation, recorded in the ADR): `PrepareAttempt` was **deleted**, not merely narrowed, because its remaining
+orchestration halves are already separately expressed (`skillBundles` via `attempt_claim`/`attempt_get` +
+`MintSkillRetrievalCapabilities`) and a dead seam is bare risk. Helper unit tests (9) + rewritten
+`integration/attempt_dispatch_test.go` (orchestration semantics + `TestServerNoLongerMaterializes` static scan) +
+full integration all pass; `go build`/`go vet`/`gofumpt`(changed files)/`git diff --check` clean.
+
+**IN SCOPE (cloud repo, this phase):**
+1. The Go helper `cmd/ora-skill-materialize` — a thin one-shot wrapper over `internal/skillruntime` +
+   `internal/skillpkg`; stdin/stdout JSON boundary (`{attempt_id, cache_root, attempt_root, skills[], capabilities[]}` →
+   `{attempt_id, prepared, local_root, stable_error_code?}`); capability arrives only on the closed channel (stdin),
+   never in argv/env/logs/persistence.
+2. Narrow `Store.PrepareAttempt`'s non-final production placement — **remove** the server-side materialization chain
+   (mint → `EnsureVerified` → `Project` → `Ready` → `SpawnGate.Open`) and its four seams (`SkillMaterializer` /
+   `SkillProjector` / `SkillReadiness` / `SkillSpawnGate`); Cloud retains binding resolution (`skillBundles` via
+   `attempt_claim` / `attempt_get`) + capability mint (`MintSkillRetrievalCapabilities` / `MintSkillRetrieval` gRPC) +
+   the fenced prepared-result relay (`attempt_result`).
+3. Remove the server-side `runtime` config section (`skill_cache_root` / `skill_attempt_root`) and its wiring — the
+   cache/attempt roots now come from the Node's invocation request, not server config.
+4. Tests (§47–§65): helper happy path + canonical `skillpkg`+`skillruntime` reuse; capability never in argv; secret
+   redaction; cross-process same-digest publication safety; same-Attempt idempotence; digest mismatches fail closed;
+   prepared result fenced by `node_id`+`dispatched_epoch`; stale/wrong-node/terminal rejection; server no longer
+   materializes.
+5. Docs (§66–§68): helper README(zh/en), cmd README module list, progress/plan/ADR/test-mirror sync.
+
+**OUT OF SCOPE (deferred, and NOT modified here):**
+- **Desktop-owned Rust Node spawn seam** — the actual `ora-node`/host/guardian subprocess invocation of the helper over a
+  closed fd/socket (Desktop submodule is reference-only; a Rust toolchain is absent on this machine). The cloud side
+  publishes the *contract* (helper binary name + absolute path + stdin/stdout shape + "no credential in argv"); the Rust
+  caller is Desktop's Phase 6B.2C work.
+- Agent process spawn (`LaunchSpec` consumption + real `os/exec`) — 6B.2C; lifecycle (heartbeat/exit/cancel/recovery) — 6B.3.
+- No new Attempt state, no new durable runtime table, no daemon/service, no operations/external_effects change.
+
+This is materialization integration only — NO Agent process spawn yet.
+
+### Phase 6B.2C — Node Helper Dispatch + Production Agent Process Start (STOPPED — architecture blocker)
+
+Status: **STOPPED at the §4 gate — implementation not started; a prior architectural decision is missing in the
+repository.** Per the phase's mandatory workflow, I executed `READ → AUDIT CURRENT NODE/SANDBOX/PROCESS HOST` and
+answered the §3 architecture questions (Q1–Q5) from the actual repos. The audit is conclusive: **there is no approved
+Agent runtime executable / runtime-selection contract anywhere in the repository**, so proceeding to process-start
+implementation would require inventing precisely the contract §84 forbids inventing. I recorded the missing decision
+and stopped — no sandbox packaging / Node→helper invocation / LaunchSpec consumption / Agent process start was
+implemented, and no Desktop/Rust product code was touched.
+
+**§3 architecture audit findings (Q1–Q5):**
+- **Q1 — approved Agent runtime executable: NOT DEFINED.** `cloud/internal/skillruntime/adapter.go` declares
+  `AgentRuntimeAdapter` as an interface ("A provider adapter (Codex/Claude/…) implements this in a later slice");
+  its only implementation `FSAdapter` "performs no transformation, no filesystem mutation, and no lookup … WITHOUT
+  spawning anything". `gate.go`'s `LaunchSpec{AttemptID, Root, Provisions}` is a pure DTO and its comment defers spawn
+  to "a 6B/Phase 2 Substrate concern" — there is **no `executable`/`argv`/`env`/`cwd`/`stdin` contract**.
+- **Q2 — who launches child processes: the Desktop Rust submodule.** `apps/ora-node`/`ora-process-host`/
+  `ora-process-guardian`/`ora-reaper`/`ora-process-helper` own the process host, but `desktop/` is reference-only for
+  this phase and no Rust toolchain (`cargo`/`rustc`) exists on this machine.
+- **Q3 — sandbox filesystem: Desktop.** `desktop/docker/Dockerfile` + `node-entrypoint.sh` define the sandbox image;
+  adding the helper to that image is itself a Desktop repo edit, out of bounds here.
+- **Q4 — dispatch transport:** Controller→Node internal gRPC exists (`internal/controlgrpc`, `MintSkillRetrieval`),
+  but the full Node dispatch of a Materialize/Execute attempt is not plumbed in the cloud repo (Controller today
+  dispatches clone, not Agent execution).
+- **Q5 — LaunchSpec sufficiency: NOT sufficient.** It carries only `AttemptID + Root + Provisions` (Skill projections);
+  it cannot name an executable/argv/env and would require inventing semantics to be launchable.
+
+**Missing decision recorded:** a new ADR `specs/decisions/cloud/skills/20260929-agent-runtime-process-start-contract.md`
+(`proposed`) captures the unresolved launch contract — which provider/executable (or a provider-neutral start contract),
+the minimal argv/env/cwd/stdin shape, which process host owns the Agent subprocess, and the Rust↔Go implementation
+demarcation given Desktop is reference-only. 6B.2C stays **STOPPED** until that ADR is approved.
+
+**IN SCOPE (this phase — none implemented):**
+1. Sandbox image contains `ora-skill-materialize` (§8) — Desktop Dockerfile edit; **BLOCKED, not done**.
+2. Rust `ora-node` invokes the helper over a closed channel (§11/§12) — Desktop subprocess seam; **BLOCKED, not done**.
+3. Helper result / local LaunchSpec consumed locally (§14/§15) — depends on §11; **BLOCKED, not done**.
+4. Approved Agent runtime process actually started (§5) — **BLOCKED by §4 STOP, not done**.
+
+**OUT OF SCOPE (deferred, and NOT modified here):** lifecycle semantics (heartbeat / result relay / cancellation /
+restart recovery / cache GC) = 6B.3; any new Attempt state; any durable runtime-instance table; any daemon; any
+change to `node_id`/`dispatched_epoch` fencing; persistence of LaunchSpec or RetrievalCapability; Rust re-implementation
+of the codec/materializer.
+
+All changes remain uncommitted; no `git commit/push/merge/rebase/cherry-pick` was run. 6B.3 is NOT auto-started.
+
+### Phase 6B.2C.1 — Agent Runtime Process Start Contract Closure (STOPPED — one remaining architecture decision)
+
+Status: **STOPPED — architecture contract written; one product decision remains.** Executed the mandatory `READ → AUDIT`
+workflow and resolved most of 6B.2C's §4 blocker from build/deployment evidence (not memory). ADR
+`specs/decisions/cloud/skills/20260929-agent-runtime-process-start-contract.md` rewritten to `proposed` D1–D20.
+Outcome per §45: **6B.2C.1 = STOPPED, 6B.2C = BLOCKED** (ADR not approved — one implementation-blocking question open).
+
+**Repository ownership resolved (§3 → Candidate A):** `desktop/` (`ora-space/desktop`, first-party, submodule) is a
+**monorepo** holding both the GUI IDE (`apps/desktop`, `crates/surface|pty|plugin-*|acp|backend|application`) AND the
+**production headless runtime stack** (`ora-node`, `ora-process-host`, `ora-process-guardian`, `ora-process-helper`,
+`ora-reaper`, `ora-controller`, crates `node-*`/`process*`/`controller-proto`/`scheduler`/`gitlancer`, `docker/`). Its
+`docker/Dockerfile --target node` is the real production sandbox-image build (ora-node + process-host + guardian + tini,
+debian-bookworm-slim, uid 1000), and `docs/deployment/container-images.md` references `ora-space/cluster` — a real
+build/release path. Cloud's `0-workspace-runtime-follows-desktop-node.md` (`implemented`) already treats desktop ora-node
+as the production Node ("以 desktop 实现为准"). The earlier "desktop = reference-only" label applied to the GUI product's
+domain semantics, not the runtime stack. Candidate B (Cloud builds a new Node) and C (extract crates) rejected — no evidence.
+
+**Runtime identity (§4/§5):** Cloud `agents` is a name+status Skill-selection authority with runtime config a declared
+non-goal (`0-agent-skill-binding.md` D2); `crates/node-protocol` has no runtime_kind/provider concept; `ora-node` currently
+does clone only. The production Agent runtime executable identity is genuinely absent from the repos → the one remaining
+product decision.
+
+**Contract frozen (D1–D20, `proposed`):** `LaunchSpec` stays materialization-only; separate Node-local provider-neutral
+`RuntimeStartSpec` → `ProcessSpec` derivation by Node runtime adapter + process host; cwd = `LaunchSpec.Root`; argv
+structured/no-shell/no-secret; env allowlist (no capability/credential); stdin via guardian fd/socket; process owner =
+`ora-process-guardian` (spawn/output/signal/cleanup) via `ora-process-host`, reaped by `ora-reaper`+`tini`; ordering =
+helper ready → fenced prepared → running → spawn (crash windows analyzed); immediate-spawn-failure owner = guardian/Node
+stable error code; process key = `attempt_id+dispatched_epoch` (non-durable); fencing reused (no new epoch/table);
+Rust↔Go boundary explicit.
+
+**Remaining decision (why still STOPPED):** the concrete Agent runtime executable/provider identity (§24) — product/provider-
+external, not derivable from repo evidence; plus the additive Controller→Node dispatch transport already recorded in prior
+ADRs. ADR stays `proposed`; 6B.2C stays BLOCKED until approved.
+
+**IN SCOPE (this phase):** architecture contract only. **OUT OF SCOPE:** any process start / sandbox packaging / Rust /
+schema / proto / public-API change. All changes uncommitted; no git commands run.
+
+### Phase 6B.2C.2 — Concrete Agent Runtime Identity Closure (STOPPED — product runtime choice required)
+
+Status: **STOPPED — concrete V1 Agent runtime cannot be selected from repository evidence (Outcome B).** Executed the
+mandatory candidate audit on the actual repos. Result: **no production Agent runtime implementation/artifact exists**; the
+only "agent runtime" is the Desktop GUI ACP plugin-agent model, which the frozen D1–D20 contract rejects. 6B.2C stays
+**BLOCKED**.
+
+**Candidate audit (§3–§14):**
+
+| candidate | artifact/binary | repository | headless? | production evidence | decision |
+| --- | --- | --- | --- | --- | --- |
+| ora-node | `ora-node` | desktop `apps/ora-node` | yes | prod sandbox image (`--target node`) | clone/git executor only — `service/executor.rs` is the "ora-node-clone" thread, no Agent execution |
+| process stack | `ora-process-host`/`-guardian`/`-helper`/`ora-reaper` | desktop `apps/ora-*` | yes | prod image | execution **infrastructure**, not a workload runtime (§4) |
+| ACP peer | (library) | desktop `crates/acp` | — | GUI backend | protocol peer — consumes/produces JSON-RPC, never spawns (§7) |
+| Desktop ACP plugin-agent | plugin-selected CLI (`command`/`packageCommand`, e.g. `official/ora-space.claude`/`opencode`) | `crates/backend/src/agent_runtime/plugin_agent` + `crates/plugin-lifecycle` | **no** (needs Tauri/backend/plugin lifecycle) | GUI product only | agent = installed plugin, plugin owns CLI, user-installed or plugin-bundled — violates D3/D4/D7 (§8/§9) |
+| provider CLI in sandbox | — | — | — | none | absent from Dockerfile; no first-party agent binary (§10/§11) |
+
+**Key negative evidence:** `docker/Dockerfile --target node` ships only `ora-node`/`ora-process-host`/`ora-process-guardian`;
+no `ora-agent` workspace member; `crates/node-protocol` runs clone/worktree execution only
+(`CloneExecutionSpec`/`CloneExecutionResult`/`WorktreeExecutionResult`) with no Agent/runtime_kind/provider concept;
+`NodeRuntimeIdentity` is a Node identity, not an Agent runtime; `ora-space/cluster` is not a submodule present on disk.
+
+**ADR updated (D21–D27 added, `proposed`):** D21 canonical `runtime_kind` unassigned (no artifact to name — not
+fabricated); D22 concrete runtime = none (Outcome B); D23 executable mapping authority = platform config + Node adaptor
+(unchanged); D24 artifact packaging/version = sandbox-image build line, owner undetermined; D25 ProcessSpec mapping shape
+frozen, concrete values pending; D26 no new semantic inputs needed; D27 secret boundary undefined (RetrievalCapability
+redline unchanged). §38 crash-window wording corrected: normal principal window = `running` committed → Node dies
+before/during spawn; "spawn intent" is now distinguished from "OS process spawned" (the old "process spawned before
+running commit" window removed).
+
+**Remaining decision (why STILL STOPPED):** the concrete V1 runtime executable/provider identity is a **product/provider
+design choice** not derivable from any repository. Two valid routes: (a) product selects a specific provider runtime and
+platform-bakes it into the `--target node` image, or (b) a separate "production Agent runtime implementation" phase is
+planned. Either closes the ADR. Plus the already-recorded additive Controller→Node dispatch transport.
+
+**IN SCOPE (this phase):** architecture/product contract only. **OUT OF SCOPE:** any process start / sandbox packaging /
+Rust / schema / proto / public-API change. All changes uncommitted; no git commands run.
+
+### Phase 6B.2C.3 — Production Agent Runtime Selection / Build-vs-Adopt Decision (DONE — ADOPT OpenCode, FINALIZED)
+
+Status: **DONE — ADOPT finalized; the process-start ADR is now `approved`; 6B.2C remains BLOCKED on 6B.2C.4.**
+The phase answered the one question 6B.2C has been blocked on: "What actually performs an Agent Execution in production V1?"
+
+**Decision (§3/§28): ADOPT** — a concrete existing headless runtime, **OpenCode** (`opencode` CLI), not a first-party BUILD.
+Rationale = product/architecture fit, not popularity: Ora is open-source, server-deployed, self-hostable, and must support
+private-network/intranet; V1 runtime must not structurally require a proprietary SaaS runtime or a public-Internet-only control
+path. OpenCode is selected because it supports headless server execution, platform-controlled packaging, provider-neutral /
+multi-provider backends, self-hosted model endpoints, private-network deployment, Node guardian ownership, and an
+Attempt-local working directory. **BUILD (first-party `ora-agent`) is deferred**, not rejected — the current milestone is Cloud
+Skills/runtime integration, not building an execution loop from scratch. **Claude Code is not the V1 default** narrowly because
+Ora must not make a specific proprietary provider runtime a mandatory architectural dependency (future optional integrations
+are not precluded).
+
+**`ora-agent-v1` vs OpenCode (critical):** `runtime_kind = "ora-agent-v1"` is Ora's **logical runtime contract/identity**;
+OpenCode is the **V1 Node/platform implementation** behind it. They are not the same domain identity.
+
+**Frozen (D28–D40 in `20260929-agent-runtime-process-start-contract.md`, status `approved`):**
+- D29 workload semantics: coding-agent session (read projected Skills → tool loop fs/git/shell → model inference → mutate
+  workspace → completion result).
+- D30 execution mode: one-shot task execution (`opencode run`, non-interactive); interactive session/worker/daemon = non-goals.
+- D31 canonical `runtime_kind` = `"ora-agent-v1"` (stable platform identity, maps to OpenCode; not a path/version/user-writable).
+- D32 artifact = OpenCode, open-source (`sst/opencode`), pinned at image-build time into `--target node`; **no runtime download**.
+- D33 provider/model/auth = **delegated to 6B.2C.4**; runtime identity ≠ implementation ≠ provider connection ≠ auth (auth is an
+  optional property of the provider connection; private-network/no-auth provider is a legal form). No provider defaulted here.
+- D34 input protocol = `opencode run` one-shot; projected Skill tree + generated config at `<root>/.opencode/`; stdout + exit code.
+- D35 Skill consumption = canonical Skill stays runtime-independent; OpenCode layout is adapter-owned; adapter projects
+  Attempt-local Skills into `<root>/.opencode/skills/<name>/SKILL.md` (native discovery); runtime never reads Object Storage /
+  signed URLs / DB / shared cache.
+- D36 cwd = `LaunchSpec.Root`; runtime mutates only the Attempt-scoped tree; never verified cache / Object Storage / source tree.
+- D37 result/lifecycle = exit code + stdout maps to Attempt succeeded/failed (future 6B.3); guardian owns signal/kill; frozen
+  running/spawn ordering preserved.
+- D38 auth = optional property of the provider connection, owned by 6B.2C.4; no secret subsystem designed here;
+  RetrievalCapability/storage/DB/controller creds still never reach the runtime.
+- D39 private-network is a first-class deployment form (not a workaround); artifact fetch happens at build time only.
+- D40 unblock rule = 6B.2C unblocks only after **6B.2C.4 closes** (the sole architectural blocker), plus pinned OpenCode in the
+  image, additive Controller→Node dispatch transport, and the Rust toolchain.
+
+**Ambient user-home state is not production authority:** production execution must not treat `~/.config`/`~/.local/share`/
+user-installed providers/ambient auth/PATH plugins as truth; the future adapter builds an Ora-controlled execution context.
+
+**Remaining gap (why 6B.2C not unblocked):** only **6B.2C.4** (Model Provider Connection & Runtime Configuration Contract
+Closure) is the architectural blocker; the additive Controller→Node dispatch transport and missing Rust toolchain are 6B.2C
+implementation prerequisites. The runtime *choice* is frozen; the runtime *existence in the image* is not yet.
+
+**IN SCOPE (this phase):** architecture/product decision only. **OUT OF SCOPE:** runtime binary, Node dispatch, process spawn,
+Docker packaging, provider integration, schema/proto. All changes uncommitted; no git commands run.
+
+### Phase 6B.2C.4 — Model Provider Connection & Runtime Configuration Contract Closure (DONE)
+
+Status: **DONE — contract closed; ADR `20260929-model-provider-connection-runtime-configuration.md` (`proposed`); 6B.2C is
+architecture-ready (no architecture blocker; only implementation prerequisites remain).**
+
+Frozen contract (D1–D24): V1 ProviderConnection is **deployment/platform-owned** — no Workspace/Agent/Execution ownership
+(audit: `agents` is name+status, runtime config is a non-goal; no such config exists in the repo). provider_kind/endpoint/model
+authority = operator-controlled deployment config; a single configured provider, none defaulted. Auth is **optional** (no-auth
+private endpoint is valid; "credential exists" is not an admission invariant). provider/model/endpoint/auth-reference are
+**deployment-only**; the secret value is **external-only** (env / deployment-mounted file / workload identity, mirroring
+`storage.credential_mode`) — no plaintext secrets in PostgreSQL, no homemade encryption. Admission **does not snapshot provider
+identity** (single deployment provider; Skill content reproducibility stays with frozen `SkillRevision`). Retry = same frozen
+`SkillRevision` + same deployment provider; Run Again = re-resolve `SkillRevision` + current deployment provider. The secret is
+resolved **Node-side**, never via Controller / browser / `ora-skill-materialize` / `RetrievalCapability`. OpenCode receives only an
+**Attempt-local, non-authoritative, disposable** derived config; ambient `~/.config` / global `opencode auth` is not production
+authority. provider config cannot change the runtime executable (`runtime_kind` stays separate). provider readiness is
+post-`running` (spawn/start), `running` unchanged. schema / public API / OpenAPI / proto / `RuntimeStartSpec` / `LaunchSpec` =
+**no change**.
+
+6B.2C status → **architecture-ready**: remaining blockers are implementation prerequisites only — (1) OpenCode config-path +
+headless non-interactive auth build-time verification against official docs (STOP if unsupported), (2) OpenCode pinned artifact
+in the `--target node` image, (3) additive Controller→Node dispatch transport, (4) Rust toolchain/build environment.
+
+### Phase 6B.2C — Implementation Attempt (BLOCKED — Rust toolchain absent)
+
+Status: **BLOCKED at the environment gate — no `rustc`/`cargo`/`rustup` on this machine; implementation not started in the
+Rust monorepo.** Per §0, executed READ → AUDIT across the real Desktop runtime stack and mapped the exact implementation
+seams before touching any code, then ran the one non-Rust gate available (§63). The architecture prerequisites
+(6B.2C.1–6B.2C.4) are all DONE and 6B.2C is architecture-ready; this pass establishes that the remaining block is purely
+the missing Rust toolchain/build environment (the ADR D40-documented implementation prerequisite).
+
+**Dispatch seam audit (§6):**
+- **Controller↔Node transport** = `crates/node-protocol` (serde frame enums `ControllerToNodeMessage` /
+  `NodeToControllerMessage`; 7 and 8 variants today, none for an agent Attempt). **Controller↔Cloud** =
+  `crates/controller-proto` (generated client of `ora.cloud.internal.v1`; `.proto` owned by Cloud `third_party/cloud`,
+  services `ClaimWork`/`RecordDispatch`/`GetDispatch`/`ListPendingDispatches`). The additive Attempt dispatch is a new
+  `ControllerToNodeMessage`/`NodeToControllerMessage` variant carrying `attempt_id`, `dispatched_epoch`, `runtime_kind`,
+  root/project identity and frozen `SkillBundleRef`s — never provider secret, executable path, or signed URLs.
+- **Node dispatch seam** = `apps/ora-node/src/execution.rs` `Node::submit` (`node_id` fencing → `NodeMismatch`,
+  `operation_id`/`execution_id` dedupe, durable `Progress` state machine). `crates/node-db` `Command` currently has only
+  `Ensure(EnsureWorktreeMessage)`/`Remove(RemoveWorktreeMessage)` — no agent-Attempt command.
+- **Process-start infra already exists** = `crates/process` (`ProcessSpec{program,args,cwd,envs,stdin/stdout/stderr,
+  kill_on_drop,reaper_registration}`, `ProcessSpawner`, `ManagedProcess`) + `crates/process-runtime` (guardian/host and
+  `host_state::launch`). The missing piece is only the Attempt dispatch path that derives a `ProcessSpec` and hands it to
+  the guardian.
+- **Sandbox image** = `desktop/docker/Dockerfile --target node` (tini → `node-entrypoint.sh` → `ora-process-host` →
+  `ora-process-guardian` → `ora-node`; runtime `debian:bookworm-slim` + git/jq/tini; uid 1000). Today it ships neither
+  OpenCode nor the Go helper.
+- **Go helper contract** verified against `cloud/cmd/ora-skill-materialize`: stdin JSON `{attempt_id, cache_root,
+  attempt_root, skills[], capabilities[]}` → one-line stdout JSON `{attempt_id, prepared, local_root?, stable_error_code?}`,
+  exit 0/1/2; capabilities never in argv/env/logs/result; never starts the Agent process.
+
+**Non-Rust gate pass (§63):** `go test -count=1 ./cmd/ora-skill-materialize/...` → ok.
+
+**Environment block (§62):** `rustc`, `cargo`, `rustup` all ABSENT (verified three ways). `rust-toolchain.toml` pins channel
+1.95.0; without cargo the Rust dispatch seam cannot be compiled, linted (`task lint:crates`) or tested (`task test:crates`,
+§64–§69), and the `--target node` image cannot be built. Per §79 no unverifiable Rust "pseudo-production" was written and no
+spawn was faked. Nothing was implemented. TO DO once a toolchain is present: (1) OpenCode config-path/headless-auth build-time
+verification (§81 STOP if unsupported), (2) pinned OpenCode artifact in the image, (3) additive Attempt dispatch transport,
+(4) Node→helper closed-channel invocation, (5) OpenCode runtime adapter (`runtime_kind="ora-agent-v1"` → OpenCode,
+platform-pinned executable, Attempt-local config), (6) guarded process start in the existing `fenced running → spawn` order,
+(7) Docker Go-build stage + OpenCode packaging.
+
+6B.2C status → **architecture-ready, implementation environment-blocked** on the Rust toolchain only. All changes
+uncommitted; no `git commit/push/merge/rebase/cherry-pick` ran; 6B.3 NOT auto-started.
+
+### Phase 6B.2S — Skills Runtime Handoff Mock Closure (CURRENT)
+
+Status: **DONE — the Skills V1 runtime handoff contract is closed and verified end-to-end in Go against a
+test-only mock runtime consumer; production Node/OpenCode runtime implementation is intentionally deferred.**
+
+**Scope correction (frozen):** Skills V1 owns Skill import → immutable SkillRevision → AgentSkillBinding →
+Execution frozen Skill snapshot → Attempt → RetrievalCapability → immutable package retrieval → verification →
+Attempt-local projection → READY → **the runtime handoff contract**. Skills V1 does **NOT** own the production
+Node implementation, the Rust runtime, the Controller→real-Node transport, OpenCode process integration, the
+Docker Node image, guardian/process-host integration, real OS spawn, provider/model execution, runtime lifecycle
+completion, or the 6B.3 succeeded/failed/cancelled process semantics. Those are **DEFERRED / FUTURE**: the
+production-runtime architecture decisions (6B.2C.1–6B.2C.4) stay documented future work and are **out of Skills
+V1 scope, not blocked** — the earlier "implementation environment-blocked on the Rust toolchain" framing applied
+to the *production runtime implementation attempt*, which Skills V1 no longer owns.
+
+**Handoff seam (§7):** the boundary already exists and is reused unchanged: `internal/skillruntime` composes
+`EnsureVerified → Project → Ready → SpawnGate.Open(ReadyAttempt) → LaunchSpec{AttemptID, Root, Provisions}`; the
+server is orchestration-only (`attempt_claim`/`attempt_get` → frozen `skillBindings` descriptor,
+`MintSkillRetrievalCapabilities`, fenced `attempt_dispatch`/`attempt_result`). No new production interface was
+invented; the mock consumer is a test-only fake in the integration suite (no fake runtime tables, §28).
+
+**Mock closure (§6–§28, §56–§57):** a test-only `mockRuntime` records the fenced dispatch identity
+(attempt_id, node_id, dispatched_epoch) plus the published `LaunchSpec` (local root + ordered provisions). One
+full integration path runs real DB admission → real `MintSkillRetrievalCapabilities` → real canonical-package
+download + verify → real `EnsureVerified → Project → Ready → SpawnGate.Open` → mock consumer, all in Go — no
+Rust, no OpenCode, no Docker image, no real spawn.
+
+**Status summary:** 6B.2S = DONE; Skills V1 runtime handoff = DONE; 6B.2C = DEFERRED / FUTURE (production
+runtime integration, architecture contract already closed); 6B.3 = FUTURE; next step = **Skills V1 Final
+Plan-Based Acceptance Audit**. All changes uncommitted; no `git commit/push/merge/rebase/cherry-pick` ran.
 
 ### Phase 6A — Node Skill retrieval & immutable cache: runtime prerequisite resolved; implementation BLOCKED
 
@@ -2364,6 +2657,11 @@ FINAL AUDIT → STOP; no git commit/push/merge/rebase/cherry-pick; all changes s
 - both Git repositories status/diff;
 - secret scan/log review;
 - plan acceptance audit.
+
+**Result — ✅ ACCEPTED（Phase 10 done）**：see `# Skills V1 Final Plan-Based Acceptance Audit Result` — all 42
+acceptance criteria satisfied (ingestion → immutable SkillRevision → AgentSkillBinding → Execution frozen snapshot →
+Attempt → RetrievalCapability → immutable package retrieval/verification → Attempt-local projection → READY →
+runtime handoff contract all implemented and test-evidenced); production Runtime/Node = **DEFERRED / FUTURE**.
 
 Implementation may split these phases into multiple commits, but must preserve coherent independently correct states.
 

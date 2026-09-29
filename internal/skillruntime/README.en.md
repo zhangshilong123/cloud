@@ -1,14 +1,16 @@
-# internal/skillruntime: server-side Skill retrieval / verification / verified cache / Attempt projection / READY / spawn gate
+# internal/skillruntime: Node-local Skill retrieval / verification / verified cache / Attempt projection / READY / spawn gate
 
 [中文](README.md) | [English](README.en.md)
 
-`internal/skillruntime` is the production server-side Skill materialization **runtime slice (6A.3 + 6A.4)**:
+`internal/skillruntime` is the canonical, Node-local Skill materialization **runtime slice (6A.3 + 6A.4)**:
 it expresses the ADR-frozen «consume a `RetrievalCapability` → bounded download → `package_digest`
 verification → single-codec decode → `content_digest` verification → verified immutable cache →
 **Attempt-scoped projection → runtime/provider adapter → READY barrier → spawn-gate abstraction →
-cleanup/bounded GC**» as directly testable code. It is the seam the 6B dispatch consumes through
-`Store.SkillMaterializer` + `Store.SkillProjector`. The normative contracts are
-`specs/decisions/cloud/skills/20260928-server-side-skill-retrieval-verification-cache.md` and
+cleanup/bounded GC**» as directly testable code. Since 6B.2B it is consumed **only** by the Node-local
+helper `cmd/ora-skill-materialize` — never by the Cloud server process, which is orchestration-only
+(frozen bindings + capability mint + fenced result relay). See
+`specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md`. The normative contracts
+are `specs/decisions/cloud/skills/20260928-server-side-skill-retrieval-verification-cache.md` and
 `specs/decisions/cloud/skills/20260928-attempt-projection-runtime-adapter-ready-spawn-gate.md`.
 
 ## Responsibilities (6A.3 — verified immutable cache)
@@ -65,8 +67,8 @@ cleanup/bounded GC**» as directly testable code. It is the seam the 6B dispatch
   discarded).
 - Package content is never executed; external IO runs outside any DB transaction; no mutable Skill lookup;
   no `os/exec` / `net/http` / DB work in this package.
-- The package imports only `internal/skillpkg` + `internal/skillstore` (never `internal/config`); wiring is
-  done by `cmd/server` from the `runtime` config section (`skill_cache_root` + `skill_attempt_root`).
+- The package imports only `internal/skillpkg` + `internal/skillstore` (never `internal/config`); it is
+  wired by `cmd/ora-skill-materialize` from the attempt's `cache_root` / `attempt_root` request fields.
 
 See [AGENTS.md](../../AGENTS.md), the [internal module map](../README.en.md),
 `specs/decisions/cloud/skills/20260928-web-runtime-skill-materialization-ownership.md`,

@@ -23,7 +23,6 @@ import (
 	"github.com/wanglongan587/cloud/internal/core"
 	"github.com/wanglongan587/cloud/internal/logger"
 	"github.com/wanglongan587/cloud/internal/repository"
-	"github.com/wanglongan587/cloud/internal/skillruntime"
 	"github.com/wanglongan587/cloud/internal/skillstore"
 	"github.com/wanglongan587/cloud/internal/skillstore/s3store"
 )
@@ -106,46 +105,10 @@ func wireRetrievalIssuer(ctx context.Context, sc *config.StorageConfig, log *zap
 	return issuer, nil
 }
 
-// wireSkillMaterializer translates the resolved `runtime` section into the production server-side
-// Skill materializer, or nil when the section is absent (the dispatch slice then reports it
-// unavailable). An invalid section was already rejected by config.Load, so a non-nil error here is a
-// construction failure and must fail startup. The cache root is a local path (not a secret) and is
-// logged deliberately for diagnosability.
-func wireSkillMaterializer(rt *config.RuntimeConfig, log *zap.Logger) (*skillruntime.Materializer, error) {
-	if rt == nil {
-		log.Info("skill runtime not configured; server-side Skill materialization unavailable")
-		return nil, nil
-	}
-	m, err := skillruntime.New(skillruntime.Config{
-		CacheRoot:      rt.SkillCacheRoot,
-		ConnectTimeout: rt.Retrieval.ConnectTimeout,
-		RequestTimeout: rt.Retrieval.RequestTimeout,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("configure skill runtime: %w", err)
-	}
-	log.Info("skill runtime configured", zap.String("cache_root", rt.SkillCacheRoot))
-	return m, nil
-}
-
-// wireSkillProjector translates the resolved `runtime` section into the production server-side Attempt
-// projector, or nil when the section is absent (the dispatch slice then reports it unavailable). An
-// invalid section was already rejected by config.Load, so a non-nil error here is a construction
-// failure and must fail startup. The attempt root is a local path (not a secret) and is logged for
-// diagnosability.
-func wireSkillProjector(rt *config.RuntimeConfig, log *zap.Logger) (*skillruntime.Projector, error) {
-	if rt == nil {
-		log.Info("skill runtime not configured; Attempt projection unavailable")
-		return nil, nil
-	}
-	p, err := skillruntime.NewProjector(rt.SkillAttemptRoot)
-	if err != nil {
-		return nil, fmt.Errorf("configure attempt projection: %w", err)
-	}
-	log.Info("attempt projection configured", zap.String("attempt_root", rt.SkillAttemptRoot))
-	return p, nil
-}
-
+// run wires the Cloud server as Skill-materialization **orchestration only** (6B.2B): it validates
+// frozen bindings and mints ephemeral retrieval capabilities for the Node-local helper, but does not
+// download, verify, project, or spawn anything. The materialization runtime internal/skillruntime is
+// consumed exclusively by cmd/ora-skill-materialize on the assigned Node.
 func run() (runErr error) {
 	configPath := flag.String("config", "", "configuration file")
 	flag.Parse()
@@ -177,20 +140,6 @@ func run() (runErr error) {
 	}
 	if cfg.Storage != nil {
 		store.RetrievalCapabilityTTL = cfg.Storage.RetrievalCapabilityTTL
-	}
-	if store.SkillMaterializer, e = wireSkillMaterializer(cfg.Runtime, log); e != nil {
-		return e
-	}
-	var projector *skillruntime.Projector
-	if projector, e = wireSkillProjector(cfg.Runtime, log); e != nil {
-		return e
-	}
-	if projector != nil {
-		// One projector serves both the Project seam and the READY barrier (6B.1); the spawn gate is
-		// assembled over the same runtime config. The gate is type-level readiness only: no spawn.
-		store.SkillProjector = projector
-		store.SkillReadiness = projector
-		store.SkillSpawnGate = skillruntime.NewSpawnGate(nil)
 	}
 	configureCollaboration(store, cfg.Collaboration.DevelopmentFixtures, log)
 	if e := store.CheckSchema(ctx); e != nil {

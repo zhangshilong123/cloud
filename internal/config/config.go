@@ -21,7 +21,6 @@ type Config struct {
 	Collaboration CollaborationConfig `mapstructure:"collaboration"`
 	Control       ControlConfig       `mapstructure:"control"`
 	Storage       *StorageConfig      `mapstructure:"storage"`
-	Runtime       *RuntimeConfig      `mapstructure:"runtime"`
 }
 
 // CollaborationConfig gates optional collaboration-capability wiring on the Store.
@@ -102,12 +101,6 @@ func Load(configPath string) (*Config, error) {
 	if cfg.Storage != nil {
 		cfg.Storage.applyDefaults()
 		if err := cfg.Storage.Validate(); err != nil {
-			return nil, err
-		}
-	}
-	if cfg.Runtime != nil {
-		cfg.Runtime.applyDefaults()
-		if err := cfg.Runtime.Validate(); err != nil {
 			return nil, err
 		}
 	}

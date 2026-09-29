@@ -1,22 +1,22 @@
 package core
 
-// Controller ↔ Runtime Attempt dispatch + preparation orchestration (6B.1).
+// Controller ↔ Runtime Attempt dispatch + prepared-result relay orchestration (6B.1 / 6B.2B).
 //
 // This file owns the Attempt-centric slice of the claim → dispatch → result control protocol that is
 // already used by clone (clone.go); Skills do not invent a new protocol, they consume the same one.
 // The durable effect boundary is the attempt dispatch row itself: attempt_id + node_id +
 // dispatched_epoch are persisted before any external IO, and the fenced result handler is the only
-// path that advances dispatched → running / failed. Server-side preparation (Store.PrepareAttempt)
-// runs outside any database transaction and stops at a LaunchSpec — it performs no process spawn and
-// never writes Attempt state (the Controller owns durable state via attempt_result).
+// path that advances dispatched → running / failed.
+//
+// As of 6B.2B the server is orchestration-only for Skill materialization: it resolves frozen bindings
+// (skillBindings), mints ephemeral retrieval capabilities (MintSkillRetrievalCapabilities), and relays
+// the Node's fenced preparedness fact via attempt_result — it no longer downloads, verifies, projects,
+// or spawns anything. The materialization chain (EnsureVerified → Project → Ready → SpawnGate.Open)
+// executes on the assigned Node via cmd/ora-skill-materialize
+// (see specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md).
 
 import (
-	"context"
-	"errors"
 	"strings"
-
-	"github.com/wanglongan587/cloud/internal/skillruntime"
-	"github.com/wanglongan587/cloud/internal/skillstore"
 )
 
 // attemptCommand runs the Attempt-centric control actions. Recovery reads (attempt_get /
@@ -108,146 +108,4 @@ func attemptResult(t *transaction, r *ControlRequest) Object {
 		t.exec("UPDATE attempts SET result=$2,state=$3,updated_at=now() WHERE attempt_id=$1", attemptID, jsonText(result), state)
 	}
 	return t.one("SELECT * FROM attempts WHERE attempt_id=$1", attemptID)
-}
-
-// PrepareAttempt orchestrates server-side Skill runtime preparation for a dispatched Attempt entirely
-// outside any database transaction: it reads the frozen execution + bindings, mints ephemeral retrieval
-// capabilities, verifies every required Skill into the immutable verified cache, projects the exact
-// Attempt, passes the explicit READY barrier, and opens the spawn gate onto a provider-neutral
-// LaunchSpec. It performs no state advance (the fenced attempt_result owns that) and stops at LaunchSpec
-// (no process spawn). It is idempotent and re-runnable: the verified cache and the published projection
-// are reused on a retry, so an ambiguous success converges to the same logical LaunchSpec.
-func (s *Store) PrepareAttempt(ctx context.Context, executionID, attemptID string) (*skillruntime.LaunchSpec, error) {
-	// Phase 1 (database-only read): resolve the exact frozen Attempt and its immutable bindings.
-	var skills []preparedSkill
-	if _, err := s.transact(ctx, func(t *transaction) Object {
-		require(validID(executionID) && validID(attemptID), 404, "authorization_failed")
-		e := t.one("SELECT execution_id FROM executions WHERE execution_id=$1", executionID)
-		require(e != nil, 404, "not_found")
-		a := t.one("SELECT state FROM attempts WHERE attempt_id=$1 AND execution_id=$2", attemptID, executionID)
-		require(a != nil, 404, "not_found")
-		require(!attemptTerminal(a.S("state")), 409, "attempt_not_eligible")
-		require(a.S("state") == "dispatched", 409, "attempt_not_dispatchable")
-		skills = prepareSkills(t, executionID)
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-
-	// Every runtime seam must be wired before any external IO; an unwired seam is unavailable, never a
-	// silently skipped materialization.
-	if s.SkillMaterializer == nil || s.SkillProjector == nil || s.SkillReadiness == nil || s.SkillSpawnGate == nil {
-		return nil, &Fault{Code: "skill_runtime_unavailable", Status: 503, Params: Object{}}
-	}
-
-	// Phase 2 (external): mint ephemeral capabilities, then verify → project → READY → open.
-	revisionIDs := make([]string, 0, len(skills))
-	for _, sk := range skills {
-		revisionIDs = append(revisionIDs, sk.revisionID)
-	}
-	capabilities, err := s.MintSkillRetrievalCapabilities(ctx, executionID, attemptID, revisionIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	projections := make([]skillruntime.ProjectionSkill, 0, len(skills))
-	for _, sk := range skills {
-		capability, ok := capabilityFor(capabilities, sk.revisionID)
-		if !ok {
-			return nil, &Fault{Code: "revision_not_bound", Status: 404, Params: Object{}}
-		}
-		verified, err := s.verifyVerified(ctx, executionID, attemptID, sk, capability)
-		if err != nil {
-			return nil, err
-		}
-		projections = append(projections, skillruntime.ProjectionSkill{
-			SkillID:       sk.skillID,
-			CanonicalName: sk.canonicalName,
-			Bundle:        sk.bundle,
-			Verified:      *verified,
-		})
-	}
-
-	prepared, err := s.SkillProjector.Project(ctx, attemptID, projections)
-	if err != nil {
-		return nil, err
-	}
-	ready, err := s.SkillReadiness.Ready(ctx, *prepared)
-	if err != nil {
-		return nil, err
-	}
-	launch := s.SkillSpawnGate.Open(*ready)
-	return &launch, nil
-}
-
-// preparedSkill is one frozen delivery descriptor resolved from immutable execution_skill_bindings,
-// joined with the canonical name purely for deterministic projection ordering. It carries nothing
-// mutable: no current revision, no object locator, no capability.
-type preparedSkill struct {
-	skillID       string
-	revisionID    string
-	canonicalName string
-	bundle        skillruntime.FrozenSkillBundle
-}
-
-// prepareSkills maps the frozen execution_skill_bindings descriptor to the runtime's FrozenSkillBundle
-// input. It reads only the immutable binding table and the Skill name (via skillBundles); it never
-// re-resolves a current revision or re-reads AgentSkillBinding.
-func prepareSkills(t *transaction, executionID string) []preparedSkill {
-	rows := skillBundles(t, executionID)
-	out := make([]preparedSkill, 0, len(rows))
-	for _, o := range rows {
-		out = append(out, preparedSkill{
-			skillID:       o.S("skillId"),
-			revisionID:    o.S("skillRevisionId"),
-			canonicalName: o.S("canonicalName"),
-			bundle: skillruntime.FrozenSkillBundle{
-				SkillRevisionID:   o.S("skillRevisionId"),
-				ContentDigestAlgo: o.S("digestAlgorithm"),
-				ContentDigest:     o.S("contentDigest"),
-				PackageDigestAlgo: o.S("packageDigestAlgorithm"),
-				PackageDigest:     o.S("packageDigest"),
-				PackageFormat:     o.S("packageFormat"),
-				PackageFormatVer:  int(o.N("packageFormatVersion")),
-				SizeBytes:         o.N("sizeBytes"),
-			},
-		})
-	}
-	return out
-}
-
-// capabilityFor returns the minted capability for one revoked frozen revision skill, or false when the
-// mint returned nothing for it (a revision not bound to this execution).
-func capabilityFor(caps []RetrievedCapability, revisionID string) (RetrievedCapability, bool) {
-	for _, c := range caps {
-		if c.SkillRevisionID == revisionID {
-			return c, true
-		}
-	}
-	return RetrievedCapability{}, false
-}
-
-// toRetrievalCapability converts the core mint result into the skillstore bearer the materializer
-// consumes; the URL is copied for the single download and then discarded (never persisted or logged).
-func toRetrievalCapability(c RetrievedCapability) skillstore.RetrievalCapability {
-	return skillstore.RetrievalCapability{URL: c.URL, Method: c.Method, ExpiresAt: c.ExpiresAt}
-}
-
-// verifyVerified verifies one frozen Skill into the immutable cache, refreshing an expired/unauthorized
-// capability exactly once (bounded): the refresh re-mints over the same (execution, attempt, revision)
-// triple and never re-resolves mutable Skill state.
-func (s *Store) verifyVerified(ctx context.Context, executionID, attemptID string, sk preparedSkill, capability RetrievedCapability) (*skillruntime.VerifiedSkillBundle, error) {
-	verified, err := s.SkillMaterializer.EnsureVerified(ctx, sk.bundle, toRetrievalCapability(capability))
-	if errors.Is(err, skillruntime.ErrRetrievalUnauthorized) {
-		fresh, merr := s.MintSkillRetrievalCapabilities(ctx, executionID, attemptID, []string{sk.revisionID})
-		if merr != nil {
-			return nil, merr
-		}
-		re, ok := capabilityFor(fresh, sk.revisionID)
-		if !ok {
-			return nil, &Fault{Code: "revision_not_bound", Status: 404, Params: Object{}}
-		}
-		verified, err = s.SkillMaterializer.EnsureVerified(ctx, sk.bundle, toRetrievalCapability(re))
-	}
-	return verified, err
 }

@@ -1588,9 +1588,9 @@ revision 就不得记 `committed`。
 实现切片的验收契约。
 
 **SKILL.md metadata contract —— 已实现（`internal/skillmeta`）。** `canonical_name` 派生缺口由
-`specs/decisions/cloud/skills/20260927-skill-md-metadata-contract.md`（状态 `proposed`）关闭，解析器现已
-在 `internal/skillmeta` 落地：`canonical_name = ASCII lowercase(TrimSpace(name))` 是**唯一**变换；`name`
-必填、必须是 YAML string、匹配 ASCII `[A-Za-z0-9._-]+`（不以 `.` 开头、≤ 200 bytes）；`description` 可选
+`specs/decisions/cloud/skills/20260927-skill-md-metadata-contract.md`（状态 `implemented`）关闭，解析器现已
+在 `internal/skillmeta` 落地：`canonical_name = NFC + Unicode case-fold(TrimSpace(name))` 是**唯一**变换；`name`
+必填、必须是 YAML string、合法 UTF-8（不以 `.` 开头、无控制字符、≤ 200 bytes）；`description` 可选
 （string、≤ 4096 bytes）；重复 key 与非法 YAML fail closed；未知字段不透明、原样保留；`internal/skillpkg`
 保持冻结、不解析 `name`。与 Desktop `0-static-skill-package.md` D3 及全部审计到的 multica 内容兼容。
 
@@ -2350,17 +2350,244 @@ one-shot helper `ora-skill-materialize`，由 Node 的 host/guardian 经封闭 f
 `specs/test-cases/cloud/skills/production-runtime-host-ownership.md` 增 6B.2A.1 future anchors（**NOT RUN**）。
 **未写任何 helper/RPC/镜像/进程代码。** 6B.2B 已解阻塞。
 
-### Phase 6B.2B —— Node-local Materialization 集成（UNBLOCKED —— 下一步）
+### Phase 6B.2B —— Node-local Materialization 集成（DONE）
 
-范围（原 BLOCKED）：把 `Store.PrepareAttempt` 的物化半程（download→verify→cache→project→READY→`SpawnGate.Open`）从
-Cloud server 迁到被派发 Node 的沙盒本地 Go helper，复用 canonical Go codec/materializer。具体：沙盒镜像加 Go build stage
-产出 `ora-skill-materialize`（`cloud/cmd/ora-skill-materialize`，`internal/skillruntime`+`internal/skillpkg` 的薄 wrapper）；
-加 Node 侧派生 seam（host/guardian 按绝对路径经封闭 fd/socket 派生 helper）；定 `MaterializeAttemptRequest`/`Result` wire
-形状（冻结 bundle 元数据 + short-lived capability；capability 绝不进 argv/env/日志）；收窄 `Store.PrepareAttempt` 的非最终
-生产放置（Cloud 只保留绑定解析 + `MintSkillRetrieval`）。集成测试覆盖：Node-local 物化、同文件系统 `LaunchSpec`、canonical
-Go codec 复用（无 Rust 复制）、RetrievalCapability 不进 argv/env/日志、同 epoch 重复物化收敛、跨进程 cache 发布安全、
-projection Attempt 隔离、prepared 结果按 `node_id`+`dispatched_epoch` 栅栏、server 不再执行生产物化。**这仅是
-materialization 集成 —— 无 Agent 进程 spawn。**Agent 进程启动（`LaunchSpec` 消费 + 真实 spawn）是 6B.2C；生命周期是 6B.3。
+状态：**DONE** —— 已把 `Store.PrepareAttempt` 的物化半程从 Cloud server 迁到被派发 Node 的沙盒本地 Go one-shot
+helper `cmd/ora-skill-materialize`，复用 canonical Go codec/materializer（`internal/skillpkg` +
+`internal/skillruntime`）。冻结边界见 `specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md`
+（**`implemented`**，Candidate B）。已交付：helper（封闭 stdin/stdout JSON 契约、退出码 0/1/2、§41 稳定错误码、
+单一 codec/materializer）+ **删除** `Store.PrepareAttempt` 与四个 server seam（`SkillMaterializer`/`SkillProjector`/
+`SkillReadiness`/`SkillSpawnGate`）+ 移除 server `runtime` 配置节；server 现为 orchestration-only（绑定描述符 +
+capability mint + fenced `attempt_result`）。**偏离记录（已写入 ADR）**：`PrepareAttempt` 为**删除**而非收窄——因为其
+编排半程已分别由 `skillBundles`（`attempt_claim`/`attempt_get`）与 `MintSkillRetrievalCapabilities` 兑现，保留死 seam
+徒增风险。helper 单测 9 组 + 重写 `integration/attempt_dispatch_test.go`（编排语义 + `TestServerNoLongerMaterializes`
+静态扫描）+ 全量 integration 全通过；`go build`/`go vet`/`gofumpt`（改动文件）/`git diff --check` 干净。
+
+**IN SCOPE（cloud 仓库，本阶段）：**
+1. Go helper `cmd/ora-skill-materialize` —— `internal/skillruntime` + `internal/skillpkg` 的薄 one-shot wrapper；
+   stdin/stdout JSON 边界（`{attempt_id, cache_root, attempt_root, skills[], capabilities[]}` →
+   `{attempt_id, prepared, local_root, stable_error_code?}`）；capability 只走封闭 channel（stdin），绝不进
+   argv/env/日志/持久化。
+2. 收窄 `Store.PrepareAttempt` 的非最终生产放置 —— **移除**服务端物化链（mint → `EnsureVerified` → `Project` →
+   `Ready` → `SpawnGate.Open`）与其四个 seam（`SkillMaterializer`/`SkillProjector`/`SkillReadiness`/`SkillSpawnGate`）；
+   Cloud 只保留绑定解析（`skillBundles` 经 `attempt_claim`/`attempt_get`）+ capability mint
+   （`MintSkillRetrievalCapabilities`/`MintSkillRetrieval` gRPC）+ fenced prepared 结果 relay（`attempt_result`）。
+3. 移除服务端 `runtime` 配置节（`skill_cache_root`/`skill_attempt_root`）及其装配 —— cache/attempt root 改由 Node 的
+   调用请求提供，不再来自 server 配置。
+4. 测试（§47–§65）：helper happy path + canonical `skillpkg`+`skillruntime` 复用；capability 不进 argv；秘密泄漏红线；
+   跨进程同 digest 发布安全；同 Attempt 幂等；digest 不匹配 fail-closed；prepared 按 `node_id`+`dispatched_epoch` 栅栏；
+   stale/错 node/终态拒绝；server 不再物化。
+5. 文档（§66–§68）：helper README(zh/en)、cmd README 模块清单、progress/plan/ADR/test-mirror 同步。
+
+**OUT OF SCOPE（延后，本阶段不改）：**
+- **Desktop 拥有的 Rust Node 派生 seam** —— `ora-node`/host/guardian 经封闭 fd/socket 按绝对路径调用 helper 的真实
+  子进程派生（Desktop 子模块仅参考；本机无 Rust 工具链）。cloud 侧只发布*契约*（helper 二进制名 + 绝对路径 +
+  stdin/stdout 形状 + "credential 不进 argv"）；Rust 调用方是 Desktop 的 6B.2C 工作。
+- Agent 进程 spawn（`LaunchSpec` 消费 + 真实 `os/exec`）—— 6B.2C；生命周期（heartbeat/exit/cancel/recovery）—— 6B.3。
+- 无新 Attempt 状态、无新 runtime 耐久表、无 daemon/service、不改 operations/external_effects。
+
+这仅是 materialization 集成 —— 无 Agent 进程 spawn。
+
+### Phase 6B.2C —— Node Helper Dispatch + 生产 Agent 进程启动（STOPPED —— 架构阻塞）
+
+状态：**在 §4 门禁 STOP —— 未开始实现；仓库缺一个前置架构决策。** 按本阶段强制工作流执行
+`READ → AUDIT CURRENT NODE/SANDBOX/PROCESS HOST`，从实际仓库回答 §3 架构问题（Q1–Q5）。审计结论确凿：
+**仓库中不存在任何已批 Agent runtime 可执行程序 / runtime-selection 契约**——继续实现 process-start 就必须发明
+正是 §84 禁止发明的契约。已记录缺失决策并 STOP：未实现 sandbox 打包 / Node→helper 调用 / LaunchSpec 消费 /
+Agent 进程启动，未触碰任何 Desktop/Rust 产品代码。
+
+**§3 架构审计结论（Q1–Q5）：**
+- **Q1 —— 已批 Agent runtime 可执行程序：未定义。** `cloud/internal/skillruntime/adapter.go` 里 `AgentRuntimeAdapter`
+  只是接口（"A provider adapter (Codex/Claude/…) implements this in a later slice"），唯一实现 `FSAdapter`
+  "performs no transformation, no filesystem mutation, and no lookup … WITHOUT spawning anything"。`gate.go` 的
+  `LaunchSpec{AttemptID, Root, Provisions}` 是纯 DTO，注释把 spawn 延给 "a 6B/Phase 2 Substrate concern"——
+  **没有 `executable`/`argv`/`env`/`cwd`/`stdin` 契约**。
+- **Q2 —— 谁派生子进程：Desktop Rust 子模块。** `apps/ora-node`/`ora-process-host`/`ora-process-guardian`/
+  `ora-reaper`/`ora-process-helper` 拥有 process host，但 `desktop/` 本阶段仅参考，本机无 Rust 工具链
+  （`cargo`/`rustc`）。
+- **Q3 —— 沙盒文件系统：Desktop。** `desktop/docker/Dockerfile` + `node-entrypoint.sh` 定义沙盒镜像；把 helper 装进
+  该镜像本身就是一次 Desktop 仓库改动，越界。
+- **Q4 —— 派发传输：** Controller→Node internal gRPC 存在（`internal/controlgrpc`、`MintSkillRetrieval`），但完整的
+  Materialize/Execute attempt 派发未在 cloud 仓库接通（Controller 目前只派发 clone 不派发 Agent 执行）。
+- **Q5 —— LaunchSpec 是否足以启动：不足。** 它只有 `AttemptID + Root + Provisions`（Skill 投影），无法命名
+  executable/argv/env，要能启动就得发明语义。
+
+**已记录缺失决策：** 新 ADR `specs/decisions/cloud/skills/20260929-agent-runtime-process-start-contract.md`
+（`proposed`）捕获未解决的启动契约——选哪个 provider/executable（或 provider-neutral 启动契约）、argv/env/cwd/stdin
+最小形状、哪个 process host 拥有 Agent 子进程、以及 Desktop 仅参考下的 Rust↔Go 实现归属。该 ADR 获批前
+6B.2C 保持 **STOPPED**。
+
+**IN SCOPE（本阶段 —— 均未实现）：**
+1. 沙盒镜像包含 `ora-skill-materialize`（§8）—— Desktop Dockerfile 改动；**阻塞，未做**。
+2. Rust `ora-node` 经封闭 channel 调用 helper（§11/§12）—— Desktop 子进程 seam；**阻塞，未做**。
+3. helper 结果 / 本地 LaunchSpec 本地消费（§14/§15）—— 依赖 §11；**阻塞，未做**。
+4. 已批 Agent runtime 进程真正启动（§5）—— **被 §4 STOP 阻塞，未做**。
+
+**OUT OF SCOPE（延后，本阶段不改）：** 生命周期语义（heartbeat / 结果 relay / cancellation / 重启恢复 /
+cache GC）= 6B.3；任何新 Attempt 状态；任何耐久 runtime-instance 表；任何 daemon；任何改动 `node_id`/
+`dispatched_epoch` fencing；持久化 LaunchSpec 或 RetrievalCapability；Rust 二次实现 codec/materializer。
+
+所有改动保持 uncommitted；未运行任何 `git commit/push/merge/rebase/cherry-pick`。6B.3 不自动开始。
+
+### Phase 6B.2C.1 —— Agent Runtime Process Start 契约闭包（STOPPED —— 一项架构决策未决）
+
+状态：**STOPPED —— 架构契约已写，剩一项产品决策。** 按强制工作流执行 `READ → AUDIT`，用构建/部署证据（非记忆）解决
+6B.2C §4 blocker 的大头。ADR `specs/decisions/cloud/skills/20260929-agent-runtime-process-start-contract.md` 重写为
+`proposed` D1–D20。§45 结果：**6B.2C.1 = STOPPED，6B.2C = BLOCKED**（ADR 未获批——一项实现阻塞项未决）。
+
+**仓库归属解决（§3 → Candidate A）：** `desktop/`（`ora-space/desktop`，第一方子模块）是 **monorepo**，同时含 GUI IDE
+（`apps/desktop`、`crates/surface|pty|plugin-*|acp|backend|application`）与**生产无头运行时栈**（`ora-node`、
+`ora-process-host`、`ora-process-guardian`、`ora-process-helper`、`ora-reaper`、`ora-controller`，crates
+`node-*`/`process*`/`controller-proto`/`scheduler`/`gitlancer`，`docker/`）。其 `docker/Dockerfile --target node` 是真实
+生产沙盒镜像构建（ora-node + process-host + guardian + tini，debian-bookworm-slim，uid 1000），
+`docs/deployment/container-images.md` 引用 `ora-space/cluster`——真实构建/发布路径。Cloud 的
+`0-workspace-runtime-follows-desktop-node.md`（`implemented`）已把 desktop ora-node 当生产 Node（「以 desktop 实现为准」）。
+早前「desktop = reference-only」标签只适用于 GUI 产品领域语义，不适用于运行时栈。Candidate B（Cloud 新建 Node）/C
+（抽取 crate）无证据支撑，否决。
+
+**runtime identity（§4/§5）：** Cloud `agents` 是 name+status 的 Skill-selection 权威，runtime config 是明言 non-goal
+（`0-agent-skill-binding.md` D2）；`crates/node-protocol` 无 runtime_kind/provider 概念；`ora-node` 目前只做 clone。生产
+Agent runtime 可执行身份在仓库中真实缺席 → 即剩的一项产品决策。
+
+**契约冻结（D1–D20，`proposed`）：** `LaunchSpec` 保持 materialization-only；独立 Node-local provider-neutral
+`RuntimeStartSpec` → `ProcessSpec` 由 Node runtime adapter + process host 派生；cwd = `LaunchSpec.Root`；argv 结构化/无
+shell/无秘密；env allowlist（无 capability/凭据）；stdin 走 guardian fd/socket；进程 owner = `ora-process-guardian`
+（spawn/output/signal/cleanup）经 `ora-process-host`，由 `ora-reaper`+`tini` reap；时序 = helper ready → fenced prepared →
+running → spawn（已分析 crash 窗口）；immediate spawn 失败 owner = guardian/Node 稳定错误码；进程键 = `attempt_id+
+dispatched_epoch`（非耐久）；复用 fencing（无新 epoch/表）；Rust↔Go 边界显式。
+
+**剩余决策（为何仍 STOPPED）：** 具体 Agent runtime 可执行/provider 身份（§24）——product/provider 外部设计，仓库证据
+给不出；另有前序 ADR 已记录的 additive Controller→Node dispatch transport。ADR 保持 `proposed`；6B.2C 获批前保持 BLOCKED。
+
+**IN SCOPE（本阶段）：** 仅架构契约。**OUT OF SCOPE：** 任何进程启动 / 沙盒打包 / Rust / schema / proto / 公开 API 变更。
+所有改动 uncommitted；未运行任何 git 命令。
+
+### Phase 6B.2C.2 —— 具体 Agent Runtime 身份闭包（STOPPED —— 待产品 runtime 选型）
+
+状态：**STOPPED —— 无法从仓库证据选定具体 V1 Agent runtime（Outcome B）。** 按强制工作流实体审计仓库候选。结果：**不存在
+任何生产 Agent runtime 实现/artifact**；唯一「agent runtime」是 Desktop GUI ACP plugin-agent 模型，被已冻结 D1–D20 契约
+否决。6B.2C 保持 **BLOCKED**。
+
+**候选审计（§3–§14）：**
+
+| 候选 | artifact/binary | 仓库 | 无头？ | 生产证据 | 判定 |
+| --- | --- | --- | --- | --- | --- |
+| ora-node | `ora-node` | desktop `apps/ora-node` | 是 | 生产沙盒镜像（`--target node`） | 仅 clone/git 执行——`service/executor.rs` 是「ora-node-clone」线程，无 Agent 执行 |
+| process 栈 | `ora-process-host`/`-guardian`/`-helper`/`ora-reaper` | desktop `apps/ora-*` | 是 | 生产镜像 | 执行**基础设施**，非工作负载 runtime（§4） |
+| ACP peer | （库） | desktop `crates/acp` | — | GUI backend | 协议 peer——收发 JSON-RPC，从不 spawn（§7） |
+| Desktop ACP plugin-agent | plugin 自选 CLI（`command`/`packageCommand`，如 `official/ora-space.claude`/`opencode`） | `crates/backend/src/agent_runtime/plugin_agent` + `crates/plugin-lifecycle` | **否**（需 Tauri/backend/plugin lifecycle） | 仅 GUI 产品 | agent = 已装 plugin、plugin 自有 CLI、用户本机安装或 plugin 包内 bundled——违 D3/D4/D7（§8/§9） |
+| 沙盒内 provider CLI | — | — | — | 无 | Dockerfile 缺席；无一方 agent 二进制（§10/§11） |
+
+**关键反证：** `docker/Dockerfile --target node` 只含 `ora-node`/`ora-process-host`/`ora-process-guardian`；无 `ora-agent`
+workspace 成员；`crates/node-protocol` 只有 clone/worktree 执行（`CloneExecutionSpec`/`CloneExecutionResult`/
+`WorktreeExecutionResult`），无 Agent/runtime_kind/provider 概念；`NodeRuntimeIdentity` 是 Node 身份非 Agent runtime；
+`ora-space/cluster` 非本 monorepo 在盘子模块。
+
+**ADR 更新（增 D21–D27，`proposed`）：** D21 规范 `runtime_kind` 未定（无 artifact 可命名——不臆造）；D22 具体 runtime =
+无（Outcome B）；D23 executable 映射权威 = 平台配置 + Node adapter（不变）；D24 artifact 打包/版本 = 沙盒镜像构建线，
+拥有者未定；D25 ProcessSpec 映射形状已冻结、具体值待定；D26 无需新增语义输入；D27 秘密边界未定（RetrievalCapability
+红线不变）。§38 crash 窗口措辞修正：normal principal 窗口 = `running` 已 commit、Node 在 spawn 前/中死亡；区分「spawn
+intent」与「OS 进程已 spawn」（删除旧「进程先于 running commit」窗口）。
+
+**剩余决策（为何仍 STOPPED）：** 具体 V1 runtime 可执行/provider 身份是**产品/provider 设计选择**，仓库无法给出。两条有效
+路径：(a) 产品选定具体 provider runtime 并 baked 进 `--target node` 沙盒镜像；或 (b) 新立「生产 Agent runtime 实现」切片。
+任一皆可闭合 ADR。另有前序已记录的 additive Controller→Node dispatch transport。
+
+**IN SCOPE（本阶段）：** 仅架构/产品契约。**OUT OF SCOPE：** 任何进程启动 / 沙盒打包 / Rust / schema / proto / 公开 API
+变更。所有改动 uncommitted；未运行任何 git 命令。
+
+### Phase 6B.2C.3 —— 生产 Agent Runtime 选型 / Build-vs-Adopt 决策（DONE —— ADOPT OpenCode，已终审）
+
+状态：**DONE —— ADOPT 已终审；process-start ADR 已升 `approved`；6B.2C 仍 BLOCKED ON 6B.2C.4。** 本相回答了 6B.2C 一直
+阻塞的那个问题：「生产 V1 到底是什么在执行一次 Agent Execution？」
+
+**裁决（§3/§28）：ADOPT** —— 采纳一个具体现有无头 runtime，**OpenCode**（`opencode` CLI），不自行 BUILD 一方 runtime。理据
+= 架构/产品契合、非「流行度」：Ora 开源、服务端部署、可自托管、须支持私网/内网，V1 runtime 不得结构性依赖某个专有 SaaS
+runtime 或仅公网可达的控制路径。OpenCode 被选因支持 headless 服务端执行、平台控制打包、provider-neutral / 多 provider
+后端、自托管模型端点、私网部署、Node guardian 归属、Attempt-local 工作目录。**BUILD（一方 `ora-agent`）= deferred**，非否决
+——当前里程碑是 Cloud Skills/runtime 集成、不是从零自建执行循环。**Claude Code 不选作 V1 默认** = 收窄地避免把一个特定专有
+provider runtime 变成强制架构依赖（不禁止未来可选集成）。
+
+**`ora-agent-v1` vs OpenCode（关键）**：`runtime_kind = "ora-agent-v1"` 是 Ora 的**逻辑 runtime 契约/身份**；OpenCode 是其
+背后的 **V1 Node/平台实现**。二者不做同一领域身份。
+
+**已冻结（`20260929-agent-runtime-process-start-contract.md` D28–D40，`approved`）：**
+- D29 workload 语义：coding-agent 会话（读投影 Skill → fs/git/shell 工具循环 → 模型推理 → 改 workspace → 完成结果）。
+- D30 执行模式：one-shot 一次性任务执行（`opencode run` 无交互）；交互会话/worker/daemon = 非目标。
+- D31 规范 `runtime_kind` = `"ora-agent-v1"`（稳定平台身份、映射 OpenCode；非路径/版本/用户可写）。
+- D32 artifact = OpenCode，开源（`sst/opencode`），构建期 pinned 进 `--target node`；**无运行时下载**。
+- D33 provider/model/auth = **委托 6B.2C.4**；runtime 身份 ≠ 实现 ≠ provider 连接 ≠ auth（auth 是 provider 连接的**可选项**、
+  私网/无鉴权 provider 合法）。不预置具体 provider。
+- D34 输入协议 = `opencode run` one-shot；投影 Skill tree + 生成配置于 `<root>/.opencode/`；stdout + 退出码。
+- D35 Skill 消费 = canonical Skill 保持 runtime-independent、OpenCode 布局属 adapter；adapter 把 Attempt-local Skill 投影进
+  `<root>/.opencode/skills/<name>/SKILL.md`（原生 discovery）；runtime 绝不直读 Object Storage / signed URL / DB / 共享 cache。
+- D36 cwd = `LaunchSpec.Root`；runtime 只改 Attempt-scoped 树；绝不改 verified cache / Object Storage / 源码树。
+- D37 结果/生命周期 = 退出码 + stdout 映射 Attempt succeeded/failed（未来 6B.3）；guardian owns signal/kill；frozen
+  running/spawn 时序保持。
+- D38 auth = provider 连接的**可选项**、属 6B.2C.4；本相不设计秘密系统；RetrievalCapability/存储/DB/controller 凭据仍绝不达
+  runtime。
+- D39 私网部署 = **一等需求**（非 workaround）；artifact 拉取只在构建期。
+- D40 unblock 规则 = 6B.2C 仅在 **6B.2C.4 闭合**（唯一架构阻塞项）+ pinned OpenCode 落镜像 + additive Controller→Node dispatch
+  transport + Rust 工具链 全部满足后 unblock。
+
+**ambient user-home 状态非生产权威**：生产执行不得把 `~/.config`/`~/.local/share`/用户安装 provider/ambient auth/PATH plugin
+当真相；未来 adapter 构造 Ora-controlled 执行上下文。
+
+**剩余缺口（为何 6B.2C 未 unblock）：** 只有 **6B.2C.4**（Model Provider Connection & Runtime Configuration Contract
+Closure）是架构阻塞项；additive Controller→Node dispatch transport 与缺失 Rust 工具链是 6B.2C 实现前置。runtime **选型**
+已冻结；runtime **落镜像**尚未。
+
+**IN SCOPE（本阶段）：** 仅架构/产品决策。**OUT OF SCOPE：** runtime 二进制、Node dispatch、进程 spawn、Docker 打包、
+provider 集成、schema/proto。所有改动 uncommitted；未运行任何 git 命令。
+
+### Phase 6B.2C.4 —— Model Provider Connection & Runtime Configuration Contract Closure（DONE）
+
+状态：**DONE —— 契约已闭合；ADR `20260929-model-provider-connection-runtime-configuration.md`（`proposed`）；6B.2C 架构就绪
+（无 architecture blocker，仅剩实现前置）。**
+
+冻结契约（D1–D24）：V1 ProviderConnection 由 **deployment/platform 所有** —— 无 Workspace/Agent/Execution 所有权（审计：
+`agents` 是 name+status、runtime config 是 non-goal、仓库无此类配置）。provider_kind/endpoint/model 权威 = operator 控制的
+deployment 配置、单一配置 provider、不预置默认。auth **可选**（无鉴权私网 endpoint 合法；「credential 存在」不是 admission
+不变式）。provider/model/endpoint/auth-reference 是 **deployment-only**；secret value **external-only**（env /
+deployment-mounted file / workload identity，镜像 `storage.credential_mode`）—— plaintext secret 不入 PostgreSQL、不自制加密。
+admission **不 snapshot provider identity**（单一 deployment provider；Skill 内容 reproducibility 仍由 frozen
+`SkillRevision` 保证）。Retry = 同 frozen `SkillRevision` + 同 deployment provider；Run Again = 重新解析 `SkillRevision` +
+当前 deployment provider。secret 由 **Node 端**解析、绝不经过 Controller / browser / `ora-skill-materialize` /
+`RetrievalCapability`。OpenCode 只收 **Attempt-local、非权威、disposable** 派生配置；ambient `~/.config` / 全局 `opencode
+auth` 非生产权威。provider 配置不改 runtime 可执行（`runtime_kind` 分离）。provider readiness 属 post-`running`（spawn/start）、
+`running` 不变。schema / public API / OpenAPI / proto / `RuntimeStartSpec` / `LaunchSpec` = **无变更**。
+
+6B.2C 状态 → **架构就绪**：剩余仅是实现前置 —— (1) OpenCode config-path + headless 无交互 auth 的构建期官方文档核验
+（不支持则 STOP）、(2) OpenCode pinned artifact 落 `--target node` 镜像、(3) additive Controller→Node dispatch transport、
+(4) Rust 工具链/构建环境。
+
+### Phase 6B.2S —— Skills Runtime Handoff Mock Closure（CURRENT）
+
+状态：**DONE —— Skills V1 的 runtime handoff 契约已闭合、并在 Go 内端到端对 test-only mock runtime consumer 验证；
+生产 Node/OpenCode runtime 实现有意推迟。**
+
+**Scope correction（冻结）：** Skills V1 拥有 Skill import → 不可变 SkillRevision → AgentSkillBinding → Execution
+frozen Skill snapshot → Attempt → RetrievalCapability → 不可变包检索 → 校验 → Attempt-local projection → READY →
+**runtime handoff 契约**。Skills V1 **不拥有**生产 Node 实现、Rust runtime、Controller→真实 Node 传输、OpenCode 进程集成、
+Docker Node 镜像、guardian/process-host 集成、真实 OS spawn、provider/model 执行、runtime 生命周期收尾、6B.3
+succeeded/failed/cancelled 进程语义。这些均 **DEFERRED / FUTURE**：生产 runtime 架构决策（6B.2C.1–6B.2C.4）保留为
+已记录的未来工作、**属 Skills V1 scope 之外、非 blocked** —— 早前「implementation environment-blocked on Rust toolchain」
+的定性适用于 *生产 runtime 实现尝试*，而 Skills V1 已不再拥有该尝试。
+
+**Handoff seam（§7）：** 边界已存在、原样复用：`internal/skillruntime` 组合 `EnsureVerified → Project → Ready →
+SpawnGate.Open(ReadyAttempt) → LaunchSpec{AttemptID, Root, Provisions}`；server 收敛为 orchestration-only
+（`attempt_claim`/`attempt_get` → frozen `skillBindings` 描述符、`MintSkillRetrievalCapabilities`、fenced
+`attempt_dispatch`/`attempt_result`）。**未新增任何生产接口**；mock consumer 是集成套件内的 test-only fake（无 fake
+运行时表，§28）。
+
+**Mock closure（§6–§28、§56–§57）：** test-only `mockRuntime` 记录 fenced dispatch identity（attempt_id、node_id、
+dispatched_epoch）+ 发布的 `LaunchSpec`（local root + 有序 provisions）。一条全量集成路径走真实 DB admission → 真实
+`MintSkillRetrievalCapabilities` → 真实 canonical 包下载 + 校验 → 真实 `EnsureVerified → Project → Ready →
+SpawnGate.Open` → mock consumer，全部在 Go 内 —— 无 Rust、无 OpenCode、无 Docker 镜像、无真实 spawn。
+
+**状态汇总：** 6B.2S = DONE；Skills V1 runtime handoff = DONE；6B.2C = DEFERRED / FUTURE（生产 runtime 集成，架构契约
+已闭合）；6B.3 = FUTURE；下一步 = **Skills V1 Final Plan-Based Acceptance Audit**。所有改动 uncommitted；未运行
+`git commit/push/merge/rebase/cherry-pick`。
 
 ### Phase 6A —— Node Skill retrieval & immutable cache：runtime 前置已解决、设计契约已闭合；实现 BLOCKED
 
@@ -2518,6 +2745,10 @@ git commit/push/merge/rebase/cherry-pick；所有改动保持未提交。
 - 两个 Git repo status/diff；
 - secret scan/log review；
 - plan acceptance audit。
+
+**结果 — ✅ ACCEPTED（Phase 10 完成）**：见 `# Skills V1 Final Plan-Based Acceptance Audit Result` —— 42 项验收准则全部满足
+（ingestion → 不可变 SkillRevision → AgentSkillBinding → Execution 冻结快照 → Attempt → RetrievalCapability → 不可变包检索/校验 →
+Attempt-local projection → READY → runtime handoff 契约全部实现且有测试证据）；生产 Runtime/Node = **DEFERRED / FUTURE**。
 
 可以拆成多个 commit，但每个阶段都必须保持 coherent、可解释、语义正确。
 

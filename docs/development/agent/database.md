@@ -127,8 +127,8 @@ a same-key resubmission, so PostgreSQL still never stores package bytes, and a `
 strand converges when the same `Idempotency-Key` re-submits.
 
 **SKILL.md metadata contract: implemented in `internal/skillmeta`** (`specs/decisions/cloud/skills/20260927-skill-md-metadata-contract.md`,
-status `proposed`): `canonical_name = ASCII lowercase(name)` is the single transformation from `SKILL.md` bytes.
-`name` is required and must be a YAML string matching ASCII `[A-Za-z0-9._-]+` (not starting with `.`, ≤ 200 bytes);
+status `implemented`): `canonical_name = NFC(case-fold(NFC(name)))` is the single transformation from `SKILL.md` bytes.
+`name` is required and must be a YAML string that is valid UTF-8 (not starting with `.`, no control characters, ≤ 200 bytes);
 `description` is optional (string, ≤ 4096 bytes); duplicate keys and invalid YAML fail closed; unknown fields are
 opaque and preserved. `internal/skillmeta` is the business metadata layer and stays separate from
 `internal/skillpkg` (which stays frozen and does not parse `name`). Compatible with Desktop

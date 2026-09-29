@@ -1,25 +1,19 @@
 package integration
 
-// Controller ↔ Runtime Attempt dispatch + preparation integration (6B.1 of
-// specs/decisions/cloud/skills/20260928-controller-attempt-dispatch-preparation.md), pinned end-to-end
-// against PostgreSQL with the preparation seams doubled:
+// Controller ↔ Runtime Attempt dispatch + Node-local preparation relay integration (6B.1 / 6B.2B),
+// pinned end-to-end against PostgreSQL:
 //
 //   - attempt_claim / attempt_dispatch / attempt_result / attempt_get / attempt_pending reuse the clone
 //     claim→dispatch→result protocol over the Attempt row, touching no operations/external_effects;
 //   - dispatch persists node_id + dispatched_epoch before any external IO, and only the fenced
 //     attempt_result advances dispatched → running / failed within the frozen seven-state enum;
-//   - Store.PrepareAttempt orchestrates mint → EnsureVerified → Project → Ready → Open entirely outside
-//     any database transaction, is idempotent (verified-cache reuse), stops at a LaunchSpec, consumes
-//     only frozen bindings, and fails closed with no partial projection on an integrity failure;
-//   - the loop is lease-fenced and submission-idempotent, mints fresh ephemeral capabilities that are
-//     never persisted, and never materializes a signed URL, a runtime path, or a process spawn.
+//   - the server is orchestration-only: it resolves the frozen skillBindings descriptor, mints ephemeral
+//     RetrievalCapabilities, and relays the Node's fenced preparedness fact — it never downloads,
+//     verifies, projects, or spawns (that chain runs in cmd/ora-skill-materialize on the Node).
 
 import (
 	"bytes"
 	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,89 +22,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wanglongan587/cloud/internal/core"
-	"github.com/wanglongan587/cloud/internal/skillruntime"
-	"github.com/wanglongan587/cloud/internal/skillstore"
 )
-
-// fakeMaterializer is a preparation-dependency test double for SkillMaterializer (Seam A). It models
-// the immutable verified cache keyed by content digest: a hit returns the cached entry, a miss
-// performs one "download" and stores the entry. It can inject a one-shot ErrRetrievalUnauthorized (to
-// drive the bounded capability refresh) and a per-digest or global permanent failure.
-type fakeMaterializer struct {
-	cache      map[string]*skillruntime.VerifiedSkillBundle
-	downloads  int
-	seen       []skillstore.RetrievalCapability
-	bundles    []skillruntime.FrozenSkillBundle
-	unauthOnce bool
-	failAll    error
-	failFor    map[string]error // content digest → permanent materialization error
-}
-
-func (m *fakeMaterializer) EnsureVerified(ctx context.Context, b skillruntime.FrozenSkillBundle, capability skillstore.RetrievalCapability) (*skillruntime.VerifiedSkillBundle, error) {
-	m.seen = append(m.seen, capability)
-	m.bundles = append(m.bundles, b)
-	if v, ok := m.cache[b.ContentDigest]; ok {
-		return v, nil
-	}
-	if e, ok := m.failFor[b.ContentDigest]; ok {
-		return nil, e
-	}
-	if m.failAll != nil {
-		return nil, m.failAll
-	}
-	if m.unauthOnce {
-		m.unauthOnce = false
-		return nil, skillruntime.ErrRetrievalUnauthorized
-	}
-	m.downloads++
-	v := &skillruntime.VerifiedSkillBundle{ContentDigest: b.ContentDigest, DigestAlgo: b.ContentDigestAlgo, CacheDir: "cache/" + b.ContentDigest}
-	m.cache[b.ContentDigest] = v
-	return v, nil
-}
-
-// fakeProjector doubles both SkillProjector (Project) and SkillReadiness (Ready), mirroring the
-// production arrangement where one *skillruntime.Projector serves both seams. It records how many
-// times each barrier ran and the skills it was asked to project.
-type fakeProjector struct {
-	projects   int
-	readyCalls int
-	lastSkills []skillruntime.ProjectionSkill
-	projectErr error
-}
-
-func (p *fakeProjector) Project(ctx context.Context, attemptID string, skills []skillruntime.ProjectionSkill) (*skillruntime.PreparedAttempt, error) {
-	p.projects++
-	if p.projectErr != nil {
-		return nil, p.projectErr
-	}
-	p.lastSkills = append([]skillruntime.ProjectionSkill(nil), skills...)
-	return &skillruntime.PreparedAttempt{AttemptID: attemptID, Root: "attempts/" + attemptID}, nil
-}
-
-func (p *fakeProjector) Ready(ctx context.Context, a skillruntime.PreparedAttempt) (*skillruntime.ReadyAttempt, error) {
-	p.readyCalls++
-	provisions := make([]skillruntime.SkillProjection, 0, len(p.lastSkills))
-	for _, sk := range p.lastSkills {
-		provisions = append(provisions, skillruntime.SkillProjection{
-			SkillID:           sk.SkillID,
-			SkillRevisionID:   sk.Bundle.SkillRevisionID,
-			RuntimeName:       sk.Bundle.SkillRevisionID,
-			ContentDigest:     sk.Bundle.ContentDigest,
-			ContentDigestAlgo: sk.Bundle.ContentDigestAlgo,
-			Dir:               a.Root + "/" + sk.Bundle.SkillRevisionID,
-		})
-	}
-	return &skillruntime.ReadyAttempt{AttemptID: a.AttemptID, Root: a.Root, Skills: provisions}, nil
-}
-
-// fakeSpawnGate doubles the SkillSpawnGate seam (Seam B): it records how many times it opened and
-// assembles the provider-neutral LaunchSpec from the ReadyAttempt.
-type fakeSpawnGate struct{ opens int }
-
-func (g *fakeSpawnGate) Open(ready skillruntime.ReadyAttempt) skillruntime.LaunchSpec {
-	g.opens++
-	return skillruntime.LaunchSpec{AttemptID: ready.AttemptID, Root: ready.Root, Provisions: ready.Skills}
-}
 
 // boundSkill is one frozen Skill of the admitted Execution under test.
 type boundSkill struct {
@@ -122,8 +34,7 @@ type boundSkill struct {
 }
 
 // attemptFixture provisions one admitted Execution whose frozen bindings carry valid object_locators,
-// wires the fake retrieval issuer and all four preparation seams, and exposes direct helpers for the
-// Controller-role control actions.
+// wires the fake retrieval issuer, and exposes direct helpers for the Controller-role control actions.
 type attemptFixture struct {
 	t         *testing.T
 	store     *core.Store
@@ -137,9 +48,6 @@ type attemptFixture struct {
 	execution string
 	attempt   string
 	issuer    *fakeIssuer
-	mat       *fakeMaterializer
-	proj      *fakeProjector
-	gate      *fakeSpawnGate
 }
 
 func newAttemptFixture(t *testing.T) *attemptFixture {
@@ -178,18 +86,10 @@ func newAttemptFixtureSkills(t *testing.T, names []string) *attemptFixture {
 	issuer := &fakeIssuer{}
 	store.RetrievalCapabilityIssuer = issuer
 
-	mat := &fakeMaterializer{cache: map[string]*skillruntime.VerifiedSkillBundle{}, failFor: map[string]error{}}
-	proj := &fakeProjector{}
-	gate := &fakeSpawnGate{}
-	store.SkillMaterializer = mat
-	store.SkillProjector = proj
-	store.SkillReadiness = proj
-	store.SkillSpawnGate = gate
-
 	return &attemptFixture{
 		t: t, store: store, ws: ws, owner: owner, agent: agent, skills: skills,
 		skillID: skills[0].skillID, revision: skills[0].revision, locator: skills[0].locator,
-		execution: execution, attempt: attempt, issuer: issuer, mat: mat, proj: proj, gate: gate,
+		execution: execution, attempt: attempt, issuer: issuer,
 	}
 }
 
@@ -269,10 +169,10 @@ func TestAttemptDispatchReusesCloneModelNoSchemaChange(t *testing.T) {
 	}
 }
 
-// TestAttemptDispatchPersistsIdentityBeforePreparation pins D1 invariant 2: node_id + dispatched_epoch
-// are durable before any external IO, and the LaunchSpec is keyed by attempt_id with no new durable
-// identity.
-func TestAttemptDispatchPersistsIdentityBeforePreparation(t *testing.T) {
+// TestAttemptDispatchPersistsIdentityLeavesNoRuntimeState pins the durable-effect boundary of 6B.2B:
+// node_id + dispatched_epoch are durable before any runtime handoff, and the dispatch itself creates no
+// durable runtime/materialization identity on the server (the Node helper owns that locally).
+func TestAttemptDispatchPersistsIdentityLeavesNoRuntimeState(t *testing.T) {
 	f := newAttemptFixture(t)
 	epoch := f.lease("c-a")
 	f.dispatch("c-a", epoch, "node-a")
@@ -281,20 +181,14 @@ func TestAttemptDispatchPersistsIdentityBeforePreparation(t *testing.T) {
 	var dEpoch int64
 	must(t, f.store.Pool.QueryRow(`SELECT node_id, dispatched_epoch FROM attempts WHERE attempt_id=$1`, f.attempt).Scan(&nodeID, &dEpoch))
 	if nodeID != "node-a" || dEpoch != epoch {
-		t.Fatalf("dispatch must persist identity before preparation, got node=%q epoch=%d", nodeID, dEpoch)
+		t.Fatalf("dispatch must persist identity before any runtime handoff, got node=%q epoch=%d", nodeID, dEpoch)
 	}
 
-	launch, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	must(t, err)
-	if launch.AttemptID != f.attempt {
-		t.Fatalf("LaunchSpec must be keyed by attempt_id, got %q", launch.AttemptID)
-	}
-
-	// Exactly one attempt remains; preparation created no durable identity.
+	// Dispatch creates no durable runtime identity: exactly one attempt remains, no materialization row.
 	var attempts int
 	must(t, f.store.Pool.QueryRow(`SELECT count(*) FROM attempts WHERE execution_id=$1`, f.execution).Scan(&attempts))
 	if attempts != 1 {
-		t.Fatalf("preparation must not create durable identity, got %d attempts", attempts)
+		t.Fatalf("dispatch must not create durable runtime identity, got %d attempts", attempts)
 	}
 }
 
@@ -327,42 +221,6 @@ func TestAttemptStateStaysWithinFrozenEnum(t *testing.T) {
 
 	// The state must stay inside the frozen enum: an out-of-enum value is rejected by the constraint.
 	execErr(t, f.store.Pool, `UPDATE attempts SET state='prepared' WHERE attempt_id=$1`, f.attempt)
-}
-
-// TestPrepareAttemptIdempotentStopsAtLaunchSpec pins D4/D7/D8: preparation is a pure, idempotent,
-// transaction-free seam that never advances Attempt state, reuses the verified cache, and stops at a
-// LaunchSpec without spawning anything.
-func TestPrepareAttemptIdempotentStopsAtLaunchSpec(t *testing.T) {
-	f := newAttemptFixture(t)
-	epoch := f.lease("c-a")
-	f.dispatch("c-a", epoch, "node-a")
-
-	first, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	must(t, err)
-	if first == nil || first.AttemptID != f.attempt || first.Root == "" || len(first.Provisions) != 1 {
-		t.Fatalf("PrepareAttempt must return a LaunchSpec keyed by attempt_id with provisions, got %v", first)
-	}
-
-	// PrepareAttempt never advances Attempt state itself (the fenced result owns that).
-	var state string
-	must(t, f.store.Pool.QueryRow(`SELECT state FROM attempts WHERE attempt_id=$1`, f.attempt).Scan(&state))
-	if state != "dispatched" {
-		t.Fatalf("PrepareAttempt must not advance state (still dispatched), got %s", state)
-	}
-
-	second, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	must(t, err)
-	if second.AttemptID != first.AttemptID || second.Root != first.Root || len(second.Provisions) != len(first.Provisions) {
-		t.Fatalf("PrepareAttempt must be idempotent: %v vs %v", first, second)
-	}
-
-	// Each prepare runs the pipeline; the materializer serves the second call from its verified cache.
-	if f.proj.projects != 2 || f.proj.readyCalls != 2 || f.gate.opens != 2 {
-		t.Fatalf("seams must run per prepare: projects=%d ready=%d opens=%d", f.proj.projects, f.proj.readyCalls, f.gate.opens)
-	}
-	if f.mat.downloads != 1 {
-		t.Fatalf("second prepare must hit the verified cache (1 download), got %d", f.mat.downloads)
-	}
 }
 
 // TestAttemptResultIdempotentAndConflict pins D2/D7: the same submission identity replays the recorded
@@ -416,79 +274,48 @@ func TestAttemptResultIdempotentAndConflict(t *testing.T) {
 	}
 }
 
-// TestPrepareAttemptMintsFreshAndPersistsNothing pins D4 invariant 4/D6: every preparation mints a
-// fresh capability over the same frozen revision and persists nothing durable, no credential material
-// appears in any row.
-func TestPrepareAttemptMintsFreshAndPersistsNothing(t *testing.T) {
+// TestAttemptClaimReturnsFrozenBindingsNotCurrent pins the frozen-bindings authority of 6B.2B: both the
+// dispatch descriptor (attempt_claim → skillBindings) and the retrieval mint consume the immutable
+// execution_skill_bindings, never re-resolving a current_revision_id that advanced after admission.
+func TestAttemptClaimReturnsFrozenBindingsNotCurrent(t *testing.T) {
 	f := newAttemptFixture(t)
 	epoch := f.lease("c-a")
-	f.dispatch("c-a", epoch, "node-a")
-
-	for i := 0; i < 2; i++ {
-		_, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-		must(t, err)
-	}
-
-	if len(f.issuer.signed) != 2 || f.issuer.signed[0] != f.locator || f.issuer.signed[1] != f.locator {
-		t.Fatalf("each prepare must mint fresh over the same frozen locator, signed %v", f.issuer.signed)
-	}
-
-	// PrepareAttempt persists nothing: the attempt result is still unset.
-	var result sql.NullString
-	must(t, f.store.Pool.QueryRow(`SELECT result::text FROM attempts WHERE attempt_id=$1`, f.attempt).Scan(&result))
-	if result.Valid {
-		t.Fatalf("PrepareAttempt must persist nothing (attempts.result still NULL), got %s", result.String)
-	}
-
-	// No signed-URL material leaks into any durable row.
-	var leaked int
-	must(t, f.store.Pool.QueryRow(`SELECT count(*) FROM skill_revisions WHERE object_locator LIKE '%X-Amz%' OR object_locator LIKE '%sig%'`).Scan(&leaked))
-	if leaked != 0 {
-		t.Fatalf("bearer credential material leaked into durable state: %d rows", leaked)
-	}
-}
-
-// TestPrepareAttemptUsesFrozenBindingsNotCurrent pins D5: preparation consumes only the frozen
-// execution_skill_bindings, never re-resolving a current_revision_id that changed after admission.
-func TestPrepareAttemptUsesFrozenBindingsNotCurrent(t *testing.T) {
-	f := newAttemptFixture(t)
-	epoch := f.lease("c-a")
-	f.dispatch("c-a", epoch, "node-a")
 
 	// Post-admission drift: the Skill's current revision advances to R2.
 	rev2 := insertRevision(t, f.store.Pool, f.skillID, strings.Repeat("b", 64), f.owner)
 	execOK(t, f.store.Pool, `UPDATE skills SET current_revision_id=$2,version=version+1,updated_at=now() WHERE id=$1`, f.skillID, rev2)
 
-	_, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
+	// The descriptor still delivers the frozen R1 binding.
+	claimed, err := f.control("c-a", "attempt_claim", core.Object{"epoch": epoch})
 	must(t, err)
+	bindings := claimed["skillBindings"].([]core.Object)
+	if len(bindings) != 1 || bindings[0].S("skillRevisionId") != f.revision {
+		t.Fatalf("attempt_claim must deliver only the frozen R1 binding, got %v", bindings)
+	}
 
-	if len(f.mat.bundles) != 1 || f.mat.bundles[0].SkillRevisionID != f.revision {
-		t.Fatalf("PrepareAttempt must consume the frozen revision R1, got %v", f.mat.bundles)
+	// The capability mint signs the frozen R1 locator, never the drifted current revision.
+	if _, err := f.store.MintSkillRetrievalCapabilities(context.Background(), f.execution, f.attempt, []string{f.revision}); err != nil {
+		t.Fatalf("mint over frozen R1 must succeed, got %v", err)
+	}
+	if len(f.issuer.signed) != 1 || f.issuer.signed[0] != f.locator {
+		t.Fatalf("mint must sign the frozen R1 locator, signed %v", f.issuer.signed)
 	}
 }
 
-// TestPrepareAttemptIntegrityFailureFailsClosedNoPartial pins D7: a permanent integrity failure
-// returns the typed materialization error, projects nothing (no partial projection), and records a
-// preparation_failed result with a stable code and no path or URL.
-func TestPrepareAttemptIntegrityFailureFailsClosedNoPartial(t *testing.T) {
+// TestAttemptResultPreparationFailedRecordsStableCodeNoSecret pins the prepared-result relay outcome: a
+// preparation_failed fact advances the attempt to failed with a stable code, and the persisted result
+// carries no runtime path or signed URL.
+func TestAttemptResultPreparationFailedRecordsStableCodeNoSecret(t *testing.T) {
 	f := newAttemptFixture(t)
-	f.mat.failAll = skillruntime.ErrPackageDigestMismatch
 	epoch := f.lease("c-a")
 	f.dispatch("c-a", epoch, "node-a")
-
-	_, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	if !errors.Is(err, skillruntime.ErrPackageDigestMismatch) {
-		t.Fatalf("integrity failure must surface the typed materialization error, got %v", err)
-	}
-	if f.proj.projects != 0 {
-		t.Fatalf("integrity failure must project nothing (no partial projection), got %d", f.proj.projects)
-	}
 
 	resulted, err := f.control("c-a", "attempt_result", core.Object{"epoch": epoch, "attemptId": f.attempt, "nodeId": "node-a", "outcome": "preparation_failed", "code": "package_digest_mismatch"})
 	must(t, err)
 	if resulted.S("state") != "failed" || resulted.O("result").S("code") != "package_digest_mismatch" {
 		t.Fatalf("preparation_failed must record failed + stable code, got %v", resulted)
 	}
+
 	// The persisted result carries no path or signed URL.
 	var resultJSON string
 	must(t, f.store.Pool.QueryRow(`SELECT result::text FROM attempts WHERE attempt_id=$1`, f.attempt).Scan(&resultJSON))
@@ -499,39 +326,15 @@ func TestPrepareAttemptIntegrityFailureFailsClosedNoPartial(t *testing.T) {
 	}
 }
 
-// TestPrepareAttemptMultiSkillAllOrNothing pins the V1 all-or-nothing rule: with two required Skills,
-// a failure in one verifies the other in the cache but projects nothing, so no partial projection ever
-// becomes visible.
-func TestPrepareAttemptMultiSkillAllOrNothing(t *testing.T) {
-	f := newAttemptFixtureSkills(t, []string{"alpha", "beta"})
-	// beta's content digest: strings.Repeat("B", 64), from the fixture builder.
-	f.mat.failFor[strings.Repeat("B", 64)] = skillruntime.ErrContentDigestMismatch
-	epoch := f.lease("c-a")
-	f.dispatch("c-a", epoch, "node-a")
-
-	_, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	if !errors.Is(err, skillruntime.ErrContentDigestMismatch) {
-		t.Fatalf("multi-skill failure must surface the typed error, got %v", err)
-	}
-	// alpha was verified (its download happened) but no projection was published.
-	if f.mat.downloads != 1 {
-		t.Fatalf("alpha should download before beta fails, got %d downloads", f.mat.downloads)
-	}
-	if f.proj.projects != 0 {
-		t.Fatalf("a mid-skill failure must project nothing (all-or-nothing), got %d", f.proj.projects)
-	}
-}
-
-// TestAttemptDispatchTerminalAttemptRejected pins D7/D14: a terminal Attempt never mints, never
-// prepares, and never advances.
+// TestAttemptDispatchTerminalAttemptRejected pins the loop-level fail-closed boundary: a terminal
+// Attempt never mints a retrieval capability and never takes a prepared result.
 func TestAttemptDispatchTerminalAttemptRejected(t *testing.T) {
 	f := newAttemptFixture(t)
 	epoch := f.lease("c-a")
 	execOK(t, f.store.Pool, `UPDATE attempts SET state='succeeded', updated_at=now() WHERE attempt_id=$1`, f.attempt)
 
-	_, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	if core.ErrorCode(err).Code != "attempt_not_eligible" || core.ErrorCode(err).Status != 409 {
-		t.Fatalf("terminal attempt must not prepare: got %d %s", core.ErrorCode(err).Status, core.ErrorCode(err).Code)
+	if _, err := f.store.MintSkillRetrievalCapabilities(context.Background(), f.execution, f.attempt, []string{f.revision}); core.ErrorCode(err).Code != "attempt_not_eligible" || core.ErrorCode(err).Status != 409 {
+		t.Fatalf("terminal attempt must not mint: got %d %s", core.ErrorCode(err).Status, core.ErrorCode(err).Code)
 	}
 	if len(f.issuer.signed) != 0 {
 		t.Fatalf("terminal attempt must not mint, signed %v", f.issuer.signed)
@@ -574,68 +377,26 @@ func TestAttemptDispatchLeaseFenced(t *testing.T) {
 	}
 }
 
-// TestAttemptDispatchNoSecretPathOrSpawn pins D6/D8: the persisted result is exactly the minimal fact,
-// no signed URL/runtime path materializes anywhere in the loop, and the core prepare path spawns no
-// process.
-func TestAttemptDispatchNoSecretPathOrSpawn(t *testing.T) {
-	f := newAttemptFixture(t)
-	epoch := f.lease("c-a")
-	f.dispatch("c-a", epoch, "node-a")
-
-	_, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	must(t, err)
-	_, err = f.control("c-a", "attempt_result", core.Object{"epoch": epoch, "attemptId": f.attempt, "nodeId": "node-a", "outcome": "prepared"})
-	must(t, err)
-
-	// The persisted result is exactly {outcome: prepared}: no extra secret/path field.
-	var resultJSON string
-	must(t, f.store.Pool.QueryRow(`SELECT result::text FROM attempts WHERE attempt_id=$1`, f.attempt).Scan(&resultJSON))
-	var result map[string]any
-	must(t, json.Unmarshal([]byte(resultJSON), &result))
-	if len(result) != 1 || result["outcome"] != "prepared" {
-		t.Fatalf("persisted result must be exactly {outcome:prepared}, got %v", result)
-	}
-	for _, bad := range []string{"http", "x-amz", "signature", "://", "/"} {
-		if strings.Contains(strings.ToLower(resultJSON), bad) {
-			t.Fatalf("persisted result must carry no secret/path, got %s", resultJSON)
+// TestServerNoLongerMaterializes pins the 6B.2B ownership relocation at the source level: the server
+// exposes no PrepareAttempt seam, no materialization/projection/readiness/spawn-gate field, and no
+// skillruntime import — the materialization chain lives only in cmd/ora-skill-materialize.
+func TestServerNoLongerMaterializes(t *testing.T) {
+	for _, rel := range []string{"attempt.go", "store.go"} {
+		src, err := os.ReadFile(filepath.Join("..", "internal", "core", rel))
+		must(t, err)
+		for _, banned := range []string{"PrepareAttempt", "SkillMaterializer", "SkillProjector", "SkillReadiness", "SkillSpawnGate", "skillruntime"} {
+			if bytes.Contains(src, []byte(banned)) {
+				t.Fatalf("internal/core/%s must no longer reference the server-side materialization seam (found %q)", rel, banned)
+			}
 		}
 	}
 
-	// Static: the core prepare path imports and spawns no process.
+	// The server-side dispatch path imports and spawns no process.
 	src, err := os.ReadFile(filepath.Join("..", "internal", "core", "attempt.go"))
 	must(t, err)
-	for _, banned := range []string{"os/exec", "exec.Command", "exec.CommandContext"} {
+	for _, banned := range []string{"os/exec", "exec.Command"} {
 		if bytes.Contains(src, []byte(banned)) {
-			t.Fatalf("core prepare path must not spawn a process (found %q)", banned)
+			t.Fatalf("core dispatch path must not spawn a process (found %q)", banned)
 		}
-	}
-}
-
-// TestPrepareAttemptCapabilityRefreshBounded pins D4/D7's bounded refresh: an expired/unauthorized
-// capability re-mints exactly once over the same frozen (execution, attempt, revision, digest),
-// hands the materializer a fresh credential, and converges without touching current Skill state.
-func TestPrepareAttemptCapabilityRefreshBounded(t *testing.T) {
-	f := newAttemptFixture(t)
-	f.mat.unauthOnce = true
-	epoch := f.lease("c-a")
-	f.dispatch("c-a", epoch, "node-a")
-
-	launch, err := f.store.PrepareAttempt(context.Background(), f.execution, f.attempt)
-	must(t, err)
-	if launch == nil || launch.AttemptID != f.attempt {
-		t.Fatalf("refresh must still converge to a LaunchSpec, got %v", launch)
-	}
-
-	// One initial mint + one bounded refresh mint, both over the same frozen locator.
-	if len(f.issuer.signed) != 2 || f.issuer.signed[0] != f.locator || f.issuer.signed[1] != f.locator {
-		t.Fatalf("refresh must mint twice over the same frozen locator, signed %v", f.issuer.signed)
-	}
-	// The materializer saw the unauthorized capability then one fresh retry.
-	if len(f.mat.seen) != 2 || f.mat.seen[0].URL == f.mat.seen[1].URL {
-		t.Fatalf("refresh must retry once with a fresh capability: seen %d caps", len(f.mat.seen))
-	}
-	// Identity is preserved: the same frozen revision and digest, never a current-Skill re-lookup.
-	if len(f.mat.bundles) != 2 || f.mat.bundles[0].SkillRevisionID != f.revision || f.mat.bundles[1].SkillRevisionID != f.revision || f.mat.bundles[0].ContentDigest != f.mat.bundles[1].ContentDigest {
-		t.Fatalf("refresh must preserve the frozen identity, got %v", f.mat.bundles)
 	}
 }

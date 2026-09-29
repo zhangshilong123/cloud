@@ -300,19 +300,20 @@ description: 处理线上事故的标准流程
 
 | 规则 | 内容 |
 |---|---|
-| `name` | **必填**，必须是字符串，trim 后匹配 `[A-Za-z0-9._-]+`，不以 `.` 开头，≤ 200 字节 |
+| `name` | **必填**，必须是字符串，Unicode trim 后非空；合法 UTF-8；不以 `.` 开头；不含控制字符（NUL/C0/DEL/C1）；≤ 200 字节（canonical key ≤ 200 字符） |
 | `description` | 可选，trim 后 ≤ 4096 字节 |
 | 缺失 `name` | **失败**——不退回目录名、不退回压缩包文件名 |
-| `name: 123` | **失败**——不做"帮你转成字符串" |
+| `name: 123` | **失败**——严格 YAML 字符串类型（`!!str`），不做"帮你转成字符串" |
 | 重复 key / 非法 YAML | **失败**（确定性失败，不是"最后一条生效"） |
 | 未知字段与正文 | 原样保留，不解析、不校验、不重写 |
 
-**`canonical_name = ASCII lowercase(name)`**，这是从内容字节到"技能标识"的**唯一**变换：
+**`canonical_name = NFC(case-fold(NFC(name)))`**（Unicode 大小写折叠 + NFC 归一化），这是从内容字节到
+"技能标识"的**唯一**变换（实现于 `internal/skillmeta`，`canonicalKey`）：
 
-- 不做 slugify（multica 的 `[^a-z0-9]+ → -` 会把 `my.skill` 和 `my-skill` 压成同一个名字，
-  直接违反唯一性要求）；
-- 不做 Unicode 归一化（字符集本来就是纯 ASCII）；
-- 只小写。所以 `Review` 与 `review` 会被视为同一个技能名。
+- 不做 slugify（multica 的 `[^a-z0-9]+ → -` 会把 `my.skill` 和 `my-skill` 压成同一个名字，直接违反
+  唯一性要求）；
+- 先 NFC、再全量 Unicode case-fold、再 NFC 收口：`Review` 与 `review` 收敛为同一键，
+  `é`（预组合）与 `e + 组合尖音符` 也收敛为同一键（大小写无关 + NFC 稳定）。
 
 **为什么 `canonical_name` 必须只从内容派生？** 因为它是幂等身份和匹配键的一部分。
 如果它还能依赖目录名，那么"同一个压缩包解压到不同目录"就会产生不同身份，

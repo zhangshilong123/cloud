@@ -16,7 +16,7 @@
   - [devlogin](gateway/devlogin/README.md)：仅限本地开发的 provider：一个输入任意身份即可登录的本地表单，只在 loopback 开发 origin 上注册。
 - [contract](contract/README.md)：定义 OpenAPI 3.0 Schema 模型（含 Skills 上传的 `SourceUploadResult`/`SourcePreparationFailure`/`SourceIngestionItem` 与 multipart request body）、DTO 结构体与契约覆盖率测试。
 - [skillpkg](skillpkg/README.md)：Cloud Skill canonical package v1 的纯内容层——canonical path 校验、ManifestV1、tree digest 与 `ora-skill-package` v1 的 encode/decode/verify，不依赖数据库或存储。
-- [skillmeta](skillmeta/README.md)：Cloud Skill 的 `SKILL.md` 元数据业务层——解析 YAML frontmatter、校验 `name`/`description` 并派生 `canonical_name = ASCII lowercase(name)`；纯 CPU、确定性、无 I/O，与 `internal/skillpkg`（身份层，永不解析 `name`）严格分离。
+- [skillmeta](skillmeta/README.md)：Cloud Skill 的 `SKILL.md` 元数据业务层——解析 YAML frontmatter、校验 `name`/`description` 并派生 `canonical_name = NFC + Unicode case-fold(name)`（Unicode 规范比较键）；纯 CPU、确定性、无 I/O，与 `internal/skillpkg`（身份层，永不解析 `name`）严格分离。
 - [skillstore](skillstore/README.md)：Cloud Skill canonical package 的 provider-neutral Object Storage 语义层——物理 `package_digest`、稳定逻辑 object key、create-only `ObjectStore` port、五值结果分类与按 `object_locator` probe 的 reconciliation；不含具体 provider / 上传 HTTP API，由 `internal/core` 的摄取 saga 通过 `Store.SkillsObjectStore` 驱动 `PutImmutable`/`Reconcile`。
   - [fakestore](skillstore/fakestore/README.md)：`skillstore.ObjectStore` 的确定性内存测试替身（test double），可注入全部失败模式。
 - [skillsource](skillsource/README.md)：Cloud Skill 的 source intake 层——把 directory / ZIP / uncompressed TAR 摄取为规范化 `sourceEntry`，执行 source 级安全校验与 `SKILL.md` candidate 发现，产出喂给 `IngestSkills` saga 的 `PreparedCandidate`；纯内存、不落库，复用 `skillpkg.ValidatePath` 与 `skillmeta.Parse`。

@@ -62,7 +62,7 @@ type PreparedCandidate struct {
 	// Files is the candidate-relative canonical tree: paths are relative to
 	// CandidateRoot, with the transport prefix removed, in exact original bytes.
 	Files []skillpkg.SourceFile
-	// CanonicalName is ASCII-lowercase(name) from the SKILL.md metadata.
+	// CanonicalName is the NFC + Unicode case-fold comparison key derived from the SKILL.md metadata.
 	CanonicalName string
 	// PackageName / PackageDescription are the validated SKILL.md metadata fields.
 	PackageName        string

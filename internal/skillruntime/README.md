@@ -1,12 +1,14 @@
-# internal/skillruntime: 服务端 Skill 获取 / 校验 / 已验证缓存 / Attempt 投影 / READY / Spawn 闸
+# internal/skillruntime: Node-local Skill 获取 / 校验 / 已验证缓存 / Attempt 投影 / READY / Spawn 闸
 
 [中文](README.md) | [English](README.en.md)
 
-`internal/skillruntime` 是生产服务端 Skill materialization 的**运行时切片（6A.3 + 6A.4）**：把 ADR 冻结的
-「消费 `RetrievalCapability` → 有界下载 → `package_digest` 校验 → 单一 codec decode → `content_digest`
-校验 → 已验证 immutable cache → **Attempt-scoped projection → runtime/provider adapter → READY 屏障 →
-spawn gate 抽象 → cleanup/bounded GC**」表达为可直接测试的代码。它是 6B dispatch 经
-`Store.SkillMaterializer` + `Store.SkillProjector` 消费的 seam。规范契约见
+`internal/skillruntime` 是 canonical、Node-local 的生产 Skill materialization **运行时切片（6A.3 + 6A.4）**：
+把 ADR 冻结的「消费 `RetrievalCapability` → 有界下载 → `package_digest` 校验 → 单一 codec decode →
+`content_digest` 校验 → 已验证 immutable cache → **Attempt-scoped projection → runtime/provider adapter →
+READY 屏障 → spawn gate 抽象 → cleanup/bounded GC**」表达为可直接测试的代码。自 6B.2B 起它**只**由 Node-local
+helper `cmd/ora-skill-materialize` 消费 —— Cloud server 进程不再消费（改为 orchestration-only：冻结绑定 +
+capability mint + fenced result relay）。见
+`specs/decisions/cloud/skills/20260929-node-runtime-materialization-placement.md`。规范契约见
 `specs/decisions/cloud/skills/20260928-server-side-skill-retrieval-verification-cache.md` 与
 `specs/decisions/cloud/skills/20260928-attempt-projection-runtime-adapter-ready-spawn-gate.md`。
 
@@ -52,7 +54,7 @@ spawn gate 抽象 → cleanup/bounded GC**」表达为可直接测试的代码�
 - capability URL/signature 永不持久化/记录/返回/入错误（transport 错误被丢弃）。
 - 不执行包内脚本/二进制；external IO 不在 DB 事务内；不 resolve 可变 Skill；无 `os/exec`/`net/http`/DB。
 - 包只 import `internal/skillpkg` + `internal/skillstore`（不 import `internal/config`）；装配由
-  `cmd/server` 从 `runtime` 配置节完成（`skill_cache_root` + `skill_attempt_root`）。
+  `cmd/ora-skill-materialize` 从 attempt 请求的 `cache_root` / `attempt_root` 字段完成。
 
 参见 [AGENTS.md](../../AGENTS.md)、[internal 模块总览](../README.md)、
 `specs/decisions/cloud/skills/20260928-web-runtime-skill-materialization-ownership.md`、
